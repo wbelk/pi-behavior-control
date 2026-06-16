@@ -4,15 +4,8 @@
 
 1. Agent must read all files in the current turn before edit/write.
 2. If a file changed on disk between the read and the edit, the agent is forced to re-read.
-4. Every successful edit is followed by a "review the change you just made" instruction the agent has to address.
-5. After every agent response, a verifier model scans the message for unverified claims (no file:line citations, hedge words, etc.); flagged responses get a follow-up prompt asking the agent to fix the speculation.
-
-## How it works
-
-1. Install
-2. Accept prompt to activate
-3. Specify verifier model
-4. Specify coding-rules.md
+3. Every successful edit is followed by a "review the change you just made" instruction the agent has to address.
+4. After every agent response, a verifier model scans the message for unverified claims (no file:line citations, hedge words, etc.); flagged responses get a follow-up prompt asking the agent to fix the speculation.
 
 ## Install
 
@@ -29,7 +22,6 @@ Or, for local development:
 ```sh
 # pi
 pi install /absolute/path/to/pi-behavior-control
-pi -e   /absolute/path/to/pi-behavior-control/src/index.ts   # one-shot test
 
 # OMP
 omp plugin link /absolute/path/to/pi-behavior-control
@@ -54,11 +46,11 @@ The post-edit review reminder cites the project's coding rules inline when prese
 
 If both files are absent at session start, you'll get a one-time notification telling you to create one if you want rule citations.
 
-> **Note on the system prompt:** pi and OMP both auto-load `AGENTS.md` / `CLAUDE.md` from the agent dir and cwd into the system prompt at startup. That's the right place for "the agent should always know these rules." `coding-rules.md` is for the *moment-of-edit reminder* — separate from the system-prompt rules, though many people use the same content for both.
+`coding-rules.md` is for the moment-of-edit reminder, not the system prompt — pi/OMP already auto-load `AGENTS.md`/`CLAUDE.md` for that.
 
 ## Read-before-edit gate
 
-After the gate accepts, pi-behavior-control intercepts every `read`, `edit`, and `write` tool call:
+pi-behavior-control intercepts every `read`, `edit`, and `write` tool call:
 
 - `read` → records the path (canonicalized via `realpathSync` so case-different paths on macOS APFS / Windows NTFS collapse correctly) plus file mtime + size.
 - `edit` or `write` against a path not recorded this turn AND that exists on disk → blocked with `"Read the file before editing it."`.
@@ -76,8 +68,6 @@ After every successful `edit` or `write`, the tool result is augmented with a ve
 3. **Approval gate** — auto-fix findings directly unless intent is unclear; if the prior response claimed completion, confirm tests ran with 0 failing this turn; if any approved scope was skipped or altered, list each deviation.
 
 The exact wording lives in `src/review-prompt.ts` (`REVIEW_BRIEF_TEXT`) — a verbatim port of `review-file.sh` from the upstream Claude `behavior-hooks` skill.
-
-If a resolved `coding-rules.md` is available, its full text is appended as a "Coding rules reference" section.
 
 ## Speculation check
 
@@ -111,8 +101,6 @@ The only silent path is when `ctx.signal` aborts mid-check — that means a new 
 ```
 PI_BEHAVIOR_CONTROL=on|off                                    # session gate; unset = prompt
 ```
-
-There are intentionally **no per-hook disable knobs**. The plugin is all-or-nothing per session — either all five hooks fire, or none do. Use `PI_BEHAVIOR_CONTROL=off` for fully-quiet runs.
 
 ## Development
 
