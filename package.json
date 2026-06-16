@@ -1,8 +1,13 @@
 {
   "name": "pi-behavior-control",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension that enforces read-before-edit, post-edit review reminders, and speculation verification on every assistant turn. Runtime-agnostic — runs under upstream pi (@earendil-works/pi-coding-agent) and OMP (@oh-my-pi/pi-coding-agent).",
-  "keywords": ["pi-package", "pi", "oh-my-pi", "omp"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "oh-my-pi",
+    "omp"
+  ],
   "type": "module",
   "license": "MIT",
   "author": "William Belk",
@@ -11,7 +16,9 @@
     "url": "https://github.com/wbelk/pi-behavior-control"
   },
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": [
+      "./src/index.ts"
+    ]
   },
   "files": [
     "src/**/*.ts",
@@ -27,9 +34,17 @@
     "typebox": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "@earendil-works/pi-ai": { "optional": true },
-    "@oh-my-pi/pi-coding-agent": { "optional": true },
-    "@oh-my-pi/pi-ai": { "optional": true }
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-ai": {
+      "optional": true
+    }
   }
 }
