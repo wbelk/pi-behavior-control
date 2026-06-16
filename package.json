@@ -14,7 +14,8 @@
     "extensions": ["./src/index.ts"]
   },
   "files": [
-    "src",
+    "src/**/*.ts",
+    "!src/**/*.test.ts",
     "README.md",
     "LICENSE"
   ],
