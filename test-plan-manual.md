@@ -49,8 +49,8 @@ Run in order — each section builds on the previous. Skip to specific categorie
 |---|---|---|
 | 23 | Ask agent a vague question that should prompt hedging: "is JavaScript slow?" Agent likely responds with hedged/speculative text | After the response ends, a follow-up appears: "Response flagged as speculative; review and amend." The agent processes it before you get your turn back. |
 | 24 | Ask agent something with citations: "read `/tmp/test.txt` and tell me what's on line 1" | After response, no follow-up. Verdict was `{ok: true}`. |
-| 25 | In `~/.omp/agent/behavior-control/config.json`, set `verifier` to `{"provider":"anthropic","id":"some-fake-model"}`. Restart. Ask any question | After response, warning toast: "verifier model 'anthropic/some-fake-model' not registered." Repeated for each subsequent response (fires every time). |
-| 26 | Set `verifier` in the config to a provider you have no API key for (e.g. `{"provider":"openai","id":"gpt-4"}`). Restart. Ask any question | Warning toast: "no API key configured for openai." Repeated every response. |
+| 25 | In `~/.omp/agent/behavior-control/config.json`, set `verifier` to `{"provider":"anthropic","id":"some-fake-model"}`. Restart. Ask any question | After response, error toast: "verifier model 'anthropic/some-fake-model' not registered." Repeated for each subsequent response (fires every time). |
+| 26 | Set `verifier` in the config to a provider you have no API key for (e.g. `{"provider":"openai","id":"gpt-4"}`). Restart. Ask any question | Error toast: "no API key configured for openai." Repeated every response. |
 | 27 | Run `omp -p "say hello"` (one-shot mode) | Plugin defaults to enabled, but speculation check is skipped (hasUI is false). Output completes normally, no speculation overhead. |
 
 ## Slash commands

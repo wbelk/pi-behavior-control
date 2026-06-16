@@ -1,18 +1,18 @@
 # pi-behavior-control
 
-A pi extension that adds five enforcement hooks to every coding session:
+`pi-behavior-control` is a plugin for pi and oh-my-pi that keeps the agent honest:
 
-1. **Read-before-edit gate** — the agent must read a file in the current turn before it can edit or write it.
-2. **External-modification gate** — if a file changed on disk between the read and the edit, the agent is forced to re-read.
-3. **Per-turn freshness** — the file-read log is cleared at every turn, so stale reads from earlier in the conversation don't count.
-4. **Post-edit review reminder** — every successful edit is followed by a "review the change you just made" instruction the agent has to address.
-5. **Speculation check** — after every assistant response, a verifier model scans the message for unverified claims (no file:line citations, hedge words, etc.); flagged responses get a follow-up prompt asking the agent to fix the speculation.
+1. Agent must read all files in the current turn before edit/write.
+2. If a file changed on disk between the read and the edit, the agent is forced to re-read.
+4. Every successful edit is followed by a "review the change you just made" instruction the agent has to address.
+5. After every agent response, a verifier model scans the message for unverified claims (no file:line citations, hedge words, etc.); flagged responses get a follow-up prompt asking the agent to fix the speculation.
 
-The plugin defaults to **opt-in per session**: every pi launch asks once whether you want it on for this session. Pick yes when writing code, no when chatting or researching.
+## How it works
 
-## Runtime support
-
-Runs unchanged under both upstream pi (`@earendil-works/pi-coding-agent`) and OMP (`@oh-my-pi/pi-coding-agent`). The `ExtensionAPI` shapes match between the two and the plugin auto-detects whichever agent dir is in use (`~/.pi/agent` or `~/.omp/agent`).
+1. Install
+2. Accept prompt to activate
+3. Specify verifier model
+4. Specify coding-rules.md
 
 ## Install
 
@@ -35,39 +35,16 @@ pi -e   /absolute/path/to/pi-behavior-control/src/index.ts   # one-shot test
 omp plugin link /absolute/path/to/pi-behavior-control
 ```
 
-## How it works
+## Slash commands
 
-### Session enablement gate
+- `/behavior-control:enable` — turn the plugin on for the rest of this session. No-op + notify if already on.
+- `/behavior-control:disable` — turn it off for the rest of this session. No-op + notify if already off.
+- `/behavior-control:set-verifier` — re-prompt for the speculation verifier.
+- `/behavior-control:status` — print enabled state, active verifier, which rules file is loaded, agent dir, and env overrides.
 
-On every `session_start` (initial launch and after `/new`, `/resume`, `/fork`, `/reload`), pi prompts:
+None of these persist across sessions (except `set-verifier`, which overwrites the persisted config).
 
-> Run pi-behavior-control this session? **[Y/n]**
-
-- **Yes** → all five hooks fire for the session.
-- **No** → the plugin is silent for the session.
-
-The choice is per-session; it's asked fresh every time. Set `PI_BEHAVIOR_CONTROL=on` or `PI_BEHAVIOR_CONTROL=off` (exact strings, case-sensitive) in the environment to bypass the prompt.
-
-In one-shot scripted modes (`pi -p "..."`, `--mode json`), the gate defaults to **on** with no prompt. The speculation check is auto-skipped in these modes — the agent has already returned to the caller, so there's nowhere to queue a follow-up.
-
-### Verifier selection
-
-When the gate accepts, pi asks which model should verify assistant responses for speculation. The list is built from **whatever models you have configured in pi/OMP** (via `ctx.modelRegistry.getAvailable()`), labelled `provider/id`. Examples for a typical config:
-
-- `anthropic/claude-haiku-4-5`
-- `anthropic/claude-sonnet-4-5`
-- `openai/gpt-4o`
-- `cursor/auto`
-- (any custom provider you've registered)
-- `Use current session model` — always offered as the last option; resolves to `ctx.model` at each `agent_end`.
-
-Two opinionated additions:
-- `anthropic/claude-haiku-4-5` is always included even if your registry doesn't have it, so the documented default is always pickable.
-- Your previously-persisted choice is always included even if the registry no longer reports it (e.g. provider deauthed) — so you can see what you had, not be silently switched.
-
-The previous choice is pre-selected (floated to position 0); **pressing Enter accepts**. The selection is persisted to `<agentDir>/behavior-control/config.json`. To change the verifier, run `/behavior-control:set-verifier` mid-session or edit the config file.
-
-### Coding-rules resolution (for the post-edit review reminder)
+## Coding-rules resolution (for the post-edit review reminder)
 
 The post-edit review reminder cites the project's coding rules inline when present. Resolution order:
 
@@ -79,7 +56,7 @@ If both files are absent at session start, you'll get a one-time notification te
 
 > **Note on the system prompt:** pi and OMP both auto-load `AGENTS.md` / `CLAUDE.md` from the agent dir and cwd into the system prompt at startup. That's the right place for "the agent should always know these rules." `coding-rules.md` is for the *moment-of-edit reminder* — separate from the system-prompt rules, though many people use the same content for both.
 
-### Read-before-edit gate
+## Read-before-edit gate
 
 After the gate accepts, pi-behavior-control intercepts every `read`, `edit`, and `write` tool call:
 
@@ -90,18 +67,19 @@ After the gate accepts, pi-behavior-control intercepts every `read`, `edit`, and
 
 The log clears at the start of every turn (`before_agent_start`). Reads from earlier turns don't count — this is the literal implementation of the per-turn freshness rule.
 
-### Post-edit review reminder
+## Post-edit review reminder
 
-After every successful `edit` or `write`, the tool result is augmented with a verbatim review brief asking the agent to:
+After every successful `edit` or `write`, the tool result is augmented with a verbatim review brief in three sections:
 
-- Trace caller / upstream / downstream paths.
-- Check for soft-failure logic, optional-but-actually-required args, missing tests.
-- Hit the Fail-Loud Contract checks (no `if (requiredArg)` guards, no silenced callbacks, etc.).
-- Confirm the agent didn't skip approved scope or claim completion without running tests.
+1. **Review brief** — asks the agent to re-read the file as a senior engineer/architect and check style, elegance, efficiency, design/architecture consistency, caller/upstream/downstream tracing, soft-failure conditional logic, conditional args that should be required, DRY, and test intent (tests must match design intent and cover edge cases, not just exercise the code as written). Broken logic should break the app and the tests.
+2. **Fail-Loud Contract violations to flag** — five specific patterns: `if (requiredArg)` guards around required work, empty `() => {}` callbacks that silence errors, optional args that are actually required, `if (cb) { cb() }` protections on required callbacks, helper signature changes without grepping every caller.
+3. **Approval gate** — auto-fix findings directly unless intent is unclear; if the prior response claimed completion, confirm tests ran with 0 failing this turn; if any approved scope was skipped or altered, list each deviation.
+
+The exact wording lives in `src/review-prompt.ts` (`REVIEW_BRIEF_TEXT`) — a verbatim port of `review-file.sh` from the upstream Claude `behavior-hooks` skill.
 
 If a resolved `coding-rules.md` is available, its full text is appended as a "Coding rules reference" section.
 
-### Speculation check
+## Speculation check
 
 When the agent finishes its full response (`agent_end`), the chosen verifier model evaluates the last assistant text against this rubric (verbatim from the upstream Claude `behavior-hooks` skill):
 
@@ -117,18 +95,16 @@ When the agent finishes its full response (`agent_end`), the chosen verifier mod
 
 The grader returns `{"ok": true}` or `{"ok": false, "reason": "..."}`. On a flag, pi-behavior-control queues a follow-up message ("address this speculation") that the agent runs before the user gets their turn back.
 
-Expected failures — timeouts, aborts, network errors, missing API key, missing model — are **fail-open silently** so verifier infrastructure problems never block your session. Unexpected errors (programming bugs that escape the expected-error handling) are **surfaced** as `error`-level notifications **every time they occur** — if the speculation check is silently broken, you need persistent feedback so you can switch verifier or disable the plugin. 15-second timeout per check.
+**Failure handling.** Anything that prevents the speculation check from running is surfaced as an `error`-level notification, every time it happens, so you can switch verifier or disable the plugin:
 
-## Slash commands
+- Verifier model not registered
+- No API key configured for the verifier provider
+- "Use current session model" picked but no model is currently active
+- Model call failed (15s timeout, network error, API error, auth rejection)
+- Model returned unparseable JSON for the verdict
+- Unexpected throw (programming bug) — accompanied by "Please report this."
 
-- `/behavior-control:enable` — turn the plugin on for the rest of this session. No-op + notify if already on.
-- `/behavior-control:disable` — turn it off for the rest of this session. No-op + notify if already off.
-- `/behavior-control:set-verifier` — re-prompt for the speculation verifier.
-- `/behavior-control:status` — print enabled state, active verifier, which rules file is loaded, agent dir, and env overrides.
-
-None of these persist across sessions (except `set-verifier`, which overwrites the persisted config).
-
-**Gotcha on `/behavior-control:enable` mid-session:** if you disable the plugin, do some reads, then re-enable it, the read tracker is empty (it didn't fire while disabled). The first edit after re-enabling will be blocked with "Read the file before editing." even for files the agent read while the plugin was off — re-read once after enabling and you're back to normal.
+The only silent path is when `ctx.signal` aborts mid-check — that means a new turn started or you cancelled, not that the verifier is broken. 15-second timeout per check.
 
 ## Environment variables
 

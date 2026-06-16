@@ -354,10 +354,10 @@ describe("runSpeculationCheck", () => {
 		expect((call?.options as { deliverAs?: string }).deliverAs).toBe("followUp");
 	});
 
-	test("complete() throws → silent fail-open (no surface notify)", async () => {
-		// `complete()` errors are EXPECTED — caught by the inner try, no
-		// notify, no sendMessage. The outer surface-notify must NOT fire
-		// for inner expected failures.
+	test("complete() throws → fires error notify every time", async () => {
+		// Model call failures (network, API error, auth rejection) are
+		// surfaced loudly — the user needs to know the verifier is
+		// broken so they can switch model or disable the plugin.
 		completeMock.mockImplementation(async () => {
 			throw new Error("boom");
 		});
@@ -366,16 +366,24 @@ describe("runSpeculationCheck", () => {
 		const pi: FakePi = { sendMessageCalls: [] };
 		const state = createSessionState();
 		state.enabled = true;
+		const ctx = makeCtx({ hasUI: true, ui, registry }) as unknown as ExtensionContext;
 
-		await runSpeculationCheck(
-			makePi(pi) as unknown as ExtensionAPI,
-			makeCtx({ hasUI: true, ui, registry }) as unknown as ExtensionContext,
-			makeEvent("some response"),
-			state,
-		);
+		for (let i = 0; i < 3; i++) {
+			await runSpeculationCheck(
+				makePi(pi) as unknown as ExtensionAPI,
+				ctx,
+				makeEvent(`response ${i}`),
+				state,
+			);
+		}
 
 		expect(pi.sendMessageCalls).toHaveLength(0);
-		expect(ui.notifyCalls).toHaveLength(0);
+		expect(ui.notifyCalls).toHaveLength(3);
+		for (const call of ui.notifyCalls) {
+			expect(call.message).toContain("speculation check failed");
+			expect(call.message).toContain("boom");
+			expect(call.type).toBe("error");
+		}
 	});
 
 	test("unexpected error outside the inner try → surfaces via outer-catch notify every time", async () => {
@@ -428,9 +436,11 @@ describe("runSpeculationCheck", () => {
 		}
 	});
 
-	test("configured timeout fires → fail-open silently, no sendMessage", async () => {
-		// Simulate a model that hangs forever; the timeout signal must abort
-		// the await and the catch arm must swallow it.
+	test("configured timeout fires → error notify (our 15s timeout, not user cancel)", async () => {
+		// Simulate a model that hangs forever. The internal timeout
+		// signal aborts the await. ctx.signal is undefined here, so the
+		// catch arm cannot mistake this for a user-cancellation and
+		// must surface an error notify.
 		completeMock.mockImplementation((_model, _ctx, opts) => {
 			const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
 			return new Promise((_, reject) => {
@@ -457,6 +467,49 @@ describe("runSpeculationCheck", () => {
 		);
 
 		expect(pi.sendMessageCalls).toHaveLength(0);
+		expect(ui.notifyCalls).toHaveLength(1);
+		const call = ui.notifyCalls[0];
+		expect(call?.message).toContain("speculation check failed");
+		expect(call?.type).toBe("error");
+	});
+
+	test("ctx.signal aborts mid-check → silent (normal lifecycle event)", async () => {
+		// When ctx.signal aborts (user cancels turn / new turn starts),
+		// the speculation check stays silent — that's a normal pi
+		// lifecycle event, not a verifier problem.
+		const abortCtrl = new AbortController();
+		completeMock.mockImplementation((_model, _ctx, opts) => {
+			const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
+			return new Promise((_, reject) => {
+				if (!signal) return;
+				signal.addEventListener(
+					"abort",
+					() => reject(new DOMException("aborted", "AbortError")),
+					{ once: true },
+				);
+				// Abort the user's ctx.signal — this propagates into the
+				// combined signal handed to complete().
+				queueMicrotask(() => abortCtrl.abort());
+			});
+		});
+		const ui: FakeUI = { notifyCalls: [] };
+		const registry: FakeRegistry = { authResult: { ok: true, apiKey: "k" } };
+		const pi: FakePi = { sendMessageCalls: [] };
+		const state = createSessionState();
+		state.enabled = true;
+
+		const baseCtx = makeCtx({ hasUI: true, ui, registry });
+		const ctxWithSignal = { ...baseCtx, signal: abortCtrl.signal };
+
+		await runSpeculationCheck(
+			makePi(pi) as unknown as ExtensionAPI,
+			ctxWithSignal as unknown as ExtensionContext,
+			makeEvent("some response"),
+			state,
+		);
+
+		expect(pi.sendMessageCalls).toHaveLength(0);
+		expect(ui.notifyCalls).toHaveLength(0);
 	});
 
 	test("session-model picked but ctx.model unavailable → fires error notify every time", async () => {
@@ -503,7 +556,7 @@ describe("runSpeculationCheck", () => {
 		}
 	});
 
-	test("getModel returns undefined → fires warning notify every time", async () => {
+	test("getModel returns undefined → fires error notify every time", async () => {
 		getModelMock.mockImplementation(() => undefined);
 		const ui: FakeUI = { notifyCalls: [] };
 		const registry: FakeRegistry = { authResult: { ok: true, apiKey: "k" } };
@@ -526,11 +579,11 @@ describe("runSpeculationCheck", () => {
 		expect(ui.notifyCalls).toHaveLength(3);
 		for (const call of ui.notifyCalls) {
 			expect(call.message).toContain("verifier model");
-			expect(call.type).toBe("warning");
+			expect(call.type).toBe("error");
 		}
 	});
 
-	test("missing API key → fires warning notify every time", async () => {
+	test("missing API key → fires error notify every time", async () => {
 		const ui: FakeUI = { notifyCalls: [] };
 		const registry: FakeRegistry = { authResult: { ok: false } };
 		const pi: FakePi = { sendMessageCalls: [] };
@@ -552,11 +605,13 @@ describe("runSpeculationCheck", () => {
 		expect(ui.notifyCalls).toHaveLength(3);
 		for (const call of ui.notifyCalls) {
 			expect(call.message).toContain("API key");
-			expect(call.type).toBe("warning");
+			expect(call.type).toBe("error");
 		}
 	});
 
-	test("malformed verifier output → fail-open silently", async () => {
+	test("malformed verifier output → fires error notify", async () => {
+		// Unparseable JSON means the chosen model isn't suited for the
+		// strict-JSON verdict format. Surface so the user can switch.
 		completeMock.mockImplementation(
 			async () =>
 				({
@@ -577,5 +632,9 @@ describe("runSpeculationCheck", () => {
 		);
 
 		expect(pi.sendMessageCalls).toHaveLength(0);
+		expect(ui.notifyCalls).toHaveLength(1);
+		const call = ui.notifyCalls[0];
+		expect(call?.message).toContain("unparseable");
+		expect(call?.type).toBe("error");
 	});
 });

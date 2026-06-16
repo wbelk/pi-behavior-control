@@ -165,8 +165,8 @@ async function runSpeculationCheckInner(
 		// Speculation check can never run until the verifier is wired up.
 		// Fire every time so the user knows to switch model or disable.
 		ctx.ui.notify(
-				`pi-behavior-control: verifier model "${verifier.provider}/${verifier.id}" not registered`,
-			"warning",
+			`pi-behavior-control: verifier model "${verifier.provider}/${verifier.id}" not registered`,
+			"error",
 		);
 		return;
 	}
@@ -176,8 +176,8 @@ async function runSpeculationCheckInner(
 		// Speculation check can never run until auth is configured. Fire
 		// every time so the user knows to add the key or switch verifier.
 		ctx.ui.notify(
-				`pi-behavior-control: no API key configured for ${verifier.provider}`,
-			"warning",
+			`pi-behavior-control: no API key configured for ${verifier.provider}`,
+			"error",
 		);
 		return;
 	}
@@ -187,11 +187,12 @@ async function runSpeculationCheckInner(
 	const prompt = RUBRIC_PROMPT_TEMPLATE.replace("<ASSISTANT_TEXT>", () => assistantText);
 	const signal = buildSignal(ctx.signal, options.timeoutMs ?? TIMEOUT_MS);
 
-	// Wrap ONLY the model call in a try/catch. Timeouts, aborts, network
-	// errors, model errors, and bad auth are all expected failure modes
-	// that fail-open silently here. Anything that throws *outside* this
-	// narrow try is a bug and surfaces via the outer catch in
-	// `runSpeculationCheck` (above).
+	// Wrap ONLY the model call in a try/catch. The only silent path is
+	// `ctx.signal` aborting mid-check — that means a new turn started or
+	// the user cancelled, which is a normal lifecycle event, not a
+	// verifier problem. Every other failure (our 15s timeout, network
+	// error, API error, auth rejection) surfaces as an error notify so
+	// the user can switch verifier or disable the plugin.
 	let response: { content: { type: string; text?: string }[] };
 	try {
 		response = await complete(
@@ -207,7 +208,13 @@ async function runSpeculationCheckInner(
 			},
 			{ apiKey: auth.apiKey, headers: auth.headers, signal },
 		);
-	} catch {
+	} catch (err) {
+		if (ctx.signal?.aborted) return;
+		const message = err instanceof Error ? err.message : String(err);
+		ctx.ui.notify(
+			`pi-behavior-control: speculation check failed (${message})`,
+			"error",
+		);
 		return;
 	}
 
@@ -220,7 +227,14 @@ async function runSpeculationCheckInner(
 		.trim();
 
 	const verdict = parseVerdict(responseText);
-	if (!verdict || verdict.ok) return;
+	if (!verdict) {
+		ctx.ui.notify(
+			`pi-behavior-control: verifier returned unparseable response; pick a model that supports strict JSON output`,
+			"error",
+		);
+		return;
+	}
+	if (verdict.ok) return;
 
 	pi.sendMessage(
 		{
@@ -294,7 +308,7 @@ function buildSignal(ctxSignal: AbortSignal | undefined, timeoutMs: number): Abo
  * Parse the verifier's response as a Verdict. The model usually returns
  * raw JSON but sometimes wraps it in markdown fences or surrounding prose.
  * Tries the whole text first, then the largest `{ ... }` slice. Returns
- * null when nothing parses cleanly — caller treats that as fail-open.
+ * null when nothing parses cleanly — caller surfaces an error notify.
  */
 export function parseVerdict(text: string): Verdict | null {
 	const direct = tryParseVerdict(text);
