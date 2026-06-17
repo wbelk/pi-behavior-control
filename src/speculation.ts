@@ -3,6 +3,7 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import * as path from "node:path";
 import * as PiAi from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
@@ -14,12 +15,24 @@ import { resolveVerifier } from "./verifier-source.ts";
 // Hook 7: speculation check. Runs the chosen verifier model against the
 // last assistant message; on a flagged verdict, queues a follow-up prompt.
 // Spec: section 7 hook 7 of tasks/plan-pi-behavior-control.md.
+//
+// Verifier prompt is split into a static system prompt (rubric + JSON
+// instruction) and a per-turn user message (assistant response + a compact
+// summary of this turn's tool calls). The split lets providers cache the
+// system prefix and keeps the rubric reusable across calls. The summary is
+// calls-only (tool name + bounded arguments) — it is context about what the
+// agent inspected, not the full tool output, to keep the check cheap.
 
 const TIMEOUT_MS = 15_000;
+// Per-tool-call argument cap. Args identify *what* a tool did (path,
+// pattern, command); they are not meant to carry payloads. Bound them so a
+// large write/edit (whose body lives in `arguments`) can't bloat the prompt.
+const MAX_ARGS_CHARS = 300;
+// Cap on how many recent-read paths are listed in <RECENT_READS>. Paths are
+// cheap (one line each), but bound the list so a session that has touched
+// hundreds of files can't balloon the verifier prompt. Most recent first.
+const MAX_RECENT_READS = 50;
 
-// Verbatim port of the Stop-hook prompt from the upstream Claude skill.
-// `$ARGUMENTS` was the assistant response; we substitute it via the
-// `<ASSISTANT_TEXT>` placeholder below.
 /**
  * Cross-runtime model lookup. Upstream pi-ai (`@earendil-works/pi-ai`)
  * exports `getModel`; OMP's pi-ai (`@oh-my-pi/pi-ai`, served via the
@@ -74,20 +87,33 @@ async function getAuthForModel(
 	return null;
 }
 
-const RUBRIC_PROMPT_TEMPLATE = `Evaluate: <ASSISTANT_TEXT>
+const SYSTEM_PROMPT = `You are a fact-check verifier. Judge whether the assistant's response is grounded, using two context blocks describing what the assistant actually inspected:
+- <TOOL_CALLS>: tool names and arguments the assistant ran this turn (arguments only — not their output).
+- <RECENT_READS>: files the assistant read within the last few turns (paths only). A file here was inspected recently even if it was not re-read on this exact turn.
 
-A claim is VERIFIED (pass) if any of these is true:
-- The response cites file:line references (e.g., \`services/sources.js:47\`)
-- The response quotes tool output visible in prior turns or the hook input
-- The response is an empty, short, or acknowledgment message
+Return strict JSON in this exact shape, with no preamble, fences, or trailing prose:
 
-A claim is SPECULATION (flag) if:
-- It describes code behavior without a file:line citation
-- It uses hedge words (may/might/could/probably/likely/should work) to describe code
-- It asserts facts that were not grounded in a tool call or citation
+{"ok": true}
+or
+{"ok": false, "reason": "<brief reason>"}
 
-Default when uncertain: return {"ok": true}. Flag when speculation is present, and review source material before amending your response to remove speculation.
-Return {"ok": true} or {"ok": false, "reason": "<brief reason>"}.`;
+A response is GROUNDED (pass) if any of these is true:
+- It cites file:line references (e.g., \`services/sources.js:47\`)
+- Its factual claims concern a file, path, or command that appears in <TOOL_CALLS> or <RECENT_READS>
+- It is empty, short, or an acknowledgment
+
+A response is SPECULATION (flag) if:
+- It describes specific code behavior without a file:line citation, and the file appears in neither <TOOL_CALLS> nor <RECENT_READS>
+- It uses hedge words (may/might/could/probably/likely/should work) to assert how code behaves
+- It asserts facts about a file or path that appears in neither <TOOL_CALLS> nor <RECENT_READS>
+
+You cannot see tool output, so do not flag a claim merely because you cannot personally verify its content — only flag claims that are unsupported by any citation and by any file in <TOOL_CALLS> or <RECENT_READS>. Default when uncertain: return {"ok": true}. Flag only when speculation is clearly present.`;
+
+const USER_TEMPLATE = `<ASSISTANT_RESPONSE>
+<ASSISTANT_TEXT_SLOT>
+</ASSISTANT_RESPONSE>
+
+<EVIDENCE_SLOT>`;
 
 const VerdictSchema = Type.Object({
 	ok: Type.Boolean(),
@@ -95,9 +121,25 @@ const VerdictSchema = Type.Object({
 });
 type Verdict = Static<typeof VerdictSchema>;
 
-/** Internal options — used by tests to shorten the timeout. */
+/**
+ * Minimal view of the read tracker the speculation check needs. Declared
+ * structurally (rather than importing `ReadTracker`) to avoid coupling this
+ * module to the tracker's full surface and to keep tests able to pass a
+ * plain stub.
+ */
+export interface ReadTrackerLike {
+	recentPaths(): readonly string[];
+}
+
+/** Internal options — used by tests to shorten the timeout / inject a tracker. */
 export interface RunSpeculationCheckOptions {
 	timeoutMs?: number;
+	/**
+	 * Source of recently-read file paths, surfaced to the verifier as
+	 * <RECENT_READS>. When omitted, the recent-reads section is empty and the
+	 * check falls back to <TOOL_CALLS>-only grounding.
+	 */
+	tracker?: ReadTrackerLike;
 }
 
 export async function runSpeculationCheck(
@@ -182,9 +224,12 @@ async function runSpeculationCheckInner(
 		return;
 	}
 
-	// Use a replacement function so `$&`, `$$`, `$1` etc. in the agent's
-	// response are NOT interpreted as String.prototype.replace patterns.
-	const prompt = RUBRIC_PROMPT_TEMPLATE.replace("<ASSISTANT_TEXT>", () => assistantText);
+	const toolCalls = buildEvidenceBlock(event.messages);
+	const recentReads = buildRecentReadsBlock(
+		options.tracker?.recentPaths() ?? [],
+		ctx.cwd,
+	);
+	const userText = buildUserPrompt(assistantText, toolCalls, recentReads);
 	const signal = buildSignal(ctx.signal, options.timeoutMs ?? TIMEOUT_MS);
 
 	// Wrap ONLY the model call in a try/catch. The only silent path is
@@ -198,10 +243,11 @@ async function runSpeculationCheckInner(
 		response = await complete(
 			model,
 			{
+				systemPrompt: SYSTEM_PROMPT,
 				messages: [
 					{
 						role: "user",
-						content: [{ type: "text", text: prompt }],
+						content: [{ type: "text", text: userText }],
 						timestamp: Date.now(),
 					},
 				],
@@ -275,6 +321,141 @@ export function extractLastAssistantText(
 		if (texts.length > 0) return texts.join("\n");
 	}
 	return "";
+}
+
+interface ToolCallEntry {
+	index: number;
+	name: string;
+	args: unknown;
+}
+
+/**
+ * Walk `messages` and return a compact `<TOOL_CALLS>` summary the verifier
+ * can use as context for what the assistant inspected this turn. Collects
+ * tool calls (assistant content with `type: "toolCall"`) and `!`-prefixed
+ * bash executions (`role: "bashExecution"`, surfaced as synthetic `bash!`
+ * entries). Tool *output* is deliberately omitted — the summary is calls
+ * only, to keep the verifier prompt small and cheap.
+ *
+ * Each entry renders as `[n] <name> <args>`, with arguments JSON-encoded
+ * and capped at MAX_ARGS_CHARS so a large write/edit body cannot bloat the
+ * prompt. Returns `"(no tool calls this run)"` when no tool activity is
+ * present, so the verifier knows the slot is intentionally empty rather
+ * than clipped.
+ */
+export function buildEvidenceBlock(
+	messages: readonly AgentEndEvent["messages"][number][],
+): string {
+	const entries: ToolCallEntry[] = [];
+
+	for (const m of messages) {
+		if (!m || typeof m !== "object") continue;
+		const role = (m as { role?: unknown }).role;
+
+		if (role === "assistant") {
+			const content = (m as { content?: unknown }).content;
+			if (!Array.isArray(content)) continue;
+			for (const c of content) {
+				if (!c || typeof c !== "object") continue;
+				if ((c as { type?: unknown }).type !== "toolCall") continue;
+				const name = (c as { name?: unknown }).name;
+				const args = (c as { arguments?: unknown }).arguments;
+				if (typeof name !== "string") continue;
+				entries.push({
+					index: entries.length + 1,
+					name,
+					args: args ?? {},
+				});
+			}
+			continue;
+		}
+
+		if (role === "bashExecution") {
+			const command = (m as { command?: unknown }).command;
+			if (typeof command !== "string") continue;
+			entries.push({
+				index: entries.length + 1,
+				name: "bash!",
+				args: { command },
+			});
+			continue;
+		}
+	}
+
+	if (entries.length === 0) return "(no tool calls this run)";
+
+	const callsBlock = entries
+		.map((e) => `[${e.index}] ${e.name} ${formatArgs(e.args)}`)
+		.join("\n");
+
+	return `<TOOL_CALLS>\n${callsBlock}\n</TOOL_CALLS>`;
+}
+
+function formatArgs(args: unknown): string {
+	let json: string;
+	try {
+		json = JSON.stringify(args);
+	} catch {
+		return "{}";
+	}
+	if (typeof json !== "string") return "{}";
+	if (json.length <= MAX_ARGS_CHARS) return json;
+	return `${json.slice(0, MAX_ARGS_CHARS)}… [truncated]`;
+}
+
+/**
+ * Build the <RECENT_READS> block: canonical paths the agent read within the
+ * tracker's sliding turn window, made relative to `cwd` when inside it (to
+ * match how the agent cites paths) and otherwise left absolute. Listed most
+ * recent last (insertion order from the tracker) and capped at
+ * MAX_RECENT_READS. Returns `"(no recent reads)"` when the list is empty so
+ * the verifier can tell an empty window from a clipped one.
+ *
+ * Exported for tests.
+ */
+export function buildRecentReadsBlock(
+	paths: readonly string[],
+	cwd: string,
+): string {
+	if (paths.length === 0) return "(no recent reads)";
+
+	// Keep the most recent entries when over the cap. The tracker yields
+	// paths in insertion order, so the tail is the most recently read.
+	const capped =
+		paths.length > MAX_RECENT_READS
+			? paths.slice(paths.length - MAX_RECENT_READS)
+			: paths;
+
+	const lines = capped.map((p) => {
+		const rel = path.relative(cwd, p);
+		// Inside cwd: use the relative form. `path.relative` returns a
+		// `..`-prefixed path for siblings/ancestors — keep those absolute
+		// so the verifier sees an unambiguous location.
+		const display = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : p;
+		return `- ${display}`;
+	});
+
+	return ["<RECENT_READS>", ...lines, "</RECENT_READS>"].join("\n");
+}
+
+/**
+ * Combine the static USER_TEMPLATE with the per-turn assistant text and the
+ * two evidence blocks (tool calls + recent reads). Uses replacement-function
+ * form of `String.replace` so any `$&`, `$$`, `$1`, etc. inside the
+ * substituted text is NOT interpreted as a `String.prototype.replace`
+ * pattern.
+ */
+function buildUserPrompt(
+	assistantText: string,
+	toolCalls: string,
+	recentReads: string,
+): string {
+	const evidence = `${toolCalls}
+
+${recentReads}`;
+	return USER_TEMPLATE
+		.replace("<ASSISTANT_TEXT_SLOT>", () => assistantText)
+		.replace("<EVIDENCE_SLOT>", () => evidence);
 }
 
 /**

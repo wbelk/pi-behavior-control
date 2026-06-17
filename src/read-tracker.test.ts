@@ -126,3 +126,96 @@ describe("clear", () => {
 		expect(tracker.paths()).toHaveLength(0);
 	});
 });
+
+describe("prune (sliding turn window)", () => {
+	test("keeps a read within the window, evicts it once it ages out", () => {
+		// Window of 2: a read on turn 0 survives the first prune (turn → 1)
+		// and is evicted on the second (turn → 2, cutoff 0).
+		const tracker = new ReadTracker(2);
+		const file = writeFile("a.txt", "x");
+		tracker.record(file);
+		expect(tracker.paths()).toHaveLength(1);
+
+		tracker.prune(); // turn 1
+		expect(tracker.paths()).toHaveLength(1);
+
+		tracker.prune(); // turn 2 → evict
+		expect(tracker.paths()).toHaveLength(0);
+	});
+
+	test("default window keeps a read across several turns", () => {
+		const tracker = new ReadTracker(); // default window 4
+		const file = writeFile("a.txt", "x");
+		tracker.record(file);
+
+		// Read on turn 0 survives prunes 1, 2, 3; evicted on the 4th.
+		tracker.prune();
+		tracker.prune();
+		tracker.prune();
+		expect(tracker.paths()).toHaveLength(1);
+
+		tracker.prune();
+		expect(tracker.paths()).toHaveLength(0);
+	});
+
+	test("a fresh read after pruning resets that path's window", () => {
+		const tracker = new ReadTracker(2);
+		const file = writeFile("a.txt", "x");
+		tracker.record(file); // turn 0
+
+		tracker.prune(); // turn 1
+		tracker.record(file); // re-read, now stamped turn 1
+		tracker.prune(); // turn 2, cutoff 0 → turn-1 entry survives
+		expect(tracker.paths()).toHaveLength(1);
+
+		tracker.prune(); // turn 3, cutoff 1 → turn-1 entry evicted
+		expect(tracker.paths()).toHaveLength(0);
+	});
+
+	test("prune before any read is a no-op (no underflow eviction)", () => {
+		const tracker = new ReadTracker(4);
+		tracker.prune();
+		tracker.prune();
+		const file = writeFile("a.txt", "x");
+		tracker.record(file);
+		expect(tracker.paths()).toHaveLength(1);
+	});
+
+	test("check() still blocks edits to a file changed since an in-window read", () => {
+		// The wider window must not weaken read-before-write: a surviving
+		// entry is still revalidated by mtime/size on every check.
+		const tracker = new ReadTracker(4);
+		const file = writeFile("a.txt", "hello");
+		tracker.record(file);
+		tracker.prune(); // still in window
+		fs.writeFileSync(file, "hello world", "utf-8"); // size changes
+		const result = tracker.check(file);
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toMatch(/modified since you read it/);
+	});
+});
+
+describe("recentPaths", () => {
+	test("returns canonical paths still inside the window", () => {
+		const tracker = new ReadTracker(2);
+		const a = writeFile("a.txt", "x");
+		const b = writeFile("b.txt", "y");
+		tracker.record(a);
+		tracker.record(b);
+		const canonicalA = fs.realpathSync(a);
+		const canonicalB = fs.realpathSync(b);
+		expect([...tracker.recentPaths()].sort()).toEqual(
+			[canonicalA, canonicalB].sort(),
+		);
+	});
+
+	test("drops paths that have aged out of the window", () => {
+		const tracker = new ReadTracker(2);
+		const a = writeFile("a.txt", "x");
+		tracker.record(a);
+		tracker.prune();
+		tracker.prune(); // evicts turn-0 read
+		expect(tracker.recentPaths()).toHaveLength(0);
+	});
+});
+

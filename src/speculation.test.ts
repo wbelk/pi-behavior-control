@@ -30,9 +30,12 @@ mock.module("@earendil-works/pi-ai", () => ({
 
 // Imports after the mock are wired through to the mocked module.
 import {
+	buildEvidenceBlock,
+	buildRecentReadsBlock,
 	extractLastAssistantText,
 	parseVerdict,
 	runSpeculationCheck,
+	type ReadTrackerLike,
 } from "./speculation.ts";
 import { createSessionState } from "./session-state.ts";
 
@@ -134,6 +137,158 @@ describe("parseVerdict", () => {
 	});
 });
 
+describe("buildEvidenceBlock", () => {
+	test("returns sentinel when no tool activity is present", () => {
+		const messages = [
+			{ role: "user", content: [{ type: "text", text: "hi" }] },
+			{ role: "assistant", content: [{ type: "text", text: "a" }] },
+		] as unknown as AgentEndEvent["messages"];
+		expect(buildEvidenceBlock(messages)).toBe("(no tool calls this run)");
+	});
+
+	test("summarizes tool calls (name + args) without any tool output", () => {
+		const messages = [
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: "reading file" },
+					{
+						type: "toolCall",
+						id: "call-1",
+						name: "read",
+						arguments: { path: "src/foo.ts" },
+					},
+				],
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				isError: false,
+				content: [{ type: "text", text: "export function foo() {}" }],
+			},
+		] as unknown as AgentEndEvent["messages"];
+		const out = buildEvidenceBlock(messages);
+		expect(out).toContain("<TOOL_CALLS>");
+		expect(out).toContain("[1] read");
+		expect(out).toContain('"path":"src/foo.ts"');
+		expect(out).toContain("</TOOL_CALLS>");
+		// Output is deliberately omitted: no results block, no result text.
+		expect(out).not.toContain("<TOOL_RESULTS>");
+		expect(out).not.toContain("export function foo() {}");
+	});
+
+	test("numbers entries in chronological order across multiple calls", () => {
+		const messages = [
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "a", name: "read", arguments: { path: "a.ts" } },
+					{ type: "toolCall", id: "b", name: "search", arguments: { pattern: "x" } },
+				],
+			},
+		] as unknown as AgentEndEvent["messages"];
+		const out = buildEvidenceBlock(messages);
+		expect(out.indexOf("[1] read")).toBeLessThan(out.indexOf("[2] search"));
+		expect(out).toContain('"pattern":"x"');
+	});
+
+	test("caps oversized arguments so a big write/edit can't bloat the prompt", () => {
+		const huge = "x".repeat(50_000);
+		const messages = [
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: "w",
+						name: "write",
+						arguments: { path: "big.ts", contents: huge },
+					},
+				],
+			},
+		] as unknown as AgentEndEvent["messages"];
+		const out = buildEvidenceBlock(messages);
+		expect(out).toContain("[1] write");
+		expect(out).toContain("[truncated]");
+		expect(out.includes(huge)).toBe(false);
+		// Whole evidence block stays small regardless of payload size.
+		expect(out.length).toBeLessThan(500);
+	});
+
+	test("includes bashExecution as a synthetic 'bash!' entry (command only)", () => {
+		const messages = [
+			{
+				role: "bashExecution",
+				command: "ls",
+				output: "file1\nfile2",
+				exitCode: 0,
+				cancelled: false,
+				truncated: false,
+				timestamp: 1,
+			},
+		] as unknown as AgentEndEvent["messages"];
+		const out = buildEvidenceBlock(messages);
+		expect(out).toContain("bash!");
+		expect(out).toContain('"command":"ls"');
+		// Command output is not included.
+		expect(out).not.toContain("file1");
+	});
+
+	test("ignores toolResult messages entirely", () => {
+		const messages = [
+			{
+				role: "toolResult",
+				toolCallId: "orphan",
+				toolName: "read",
+				isError: false,
+				content: [{ type: "text", text: "should not appear" }],
+			},
+		] as unknown as AgentEndEvent["messages"];
+		expect(buildEvidenceBlock(messages)).toBe("(no tool calls this run)");
+	});
+
+	test("skips custom/branchSummary/compactionSummary message types", () => {
+		const messages = [
+			{ role: "custom", customType: "x", content: "y", display: true, timestamp: 1 },
+			{ role: "branchSummary", summary: "...", fromId: "a", timestamp: 1 },
+			{ role: "compactionSummary", summary: "...", tokensBefore: 100, timestamp: 1 },
+		] as unknown as AgentEndEvent["messages"];
+		expect(buildEvidenceBlock(messages)).toBe("(no tool calls this run)");
+	});
+});
+
+describe("buildRecentReadsBlock", () => {
+	test("returns the empty sentinel when no paths are given", () => {
+		expect(buildRecentReadsBlock([], "/work")).toBe("(no recent reads)");
+	});
+
+	test("renders in-cwd paths relative and wraps them in <RECENT_READS>", () => {
+		const out = buildRecentReadsBlock(["/work/src/a.ts", "/work/b.ts"], "/work");
+		expect(out).toContain("<RECENT_READS>");
+		expect(out).toContain("</RECENT_READS>");
+		expect(out).toContain("- src/a.ts");
+		expect(out).toContain("- b.ts");
+	});
+
+	test("keeps out-of-cwd paths absolute", () => {
+		const out = buildRecentReadsBlock(["/elsewhere/c.ts"], "/work");
+		// `path.relative` would yield a `..`-prefixed path; we keep absolute.
+		expect(out).toContain("- /elsewhere/c.ts");
+		expect(out).not.toContain("..");
+	});
+
+	test("caps the list at MAX_RECENT_READS, keeping the most recent (tail)", () => {
+		const paths = Array.from({ length: 60 }, (_unused, i) => `/work/f${i}.ts`);
+		const out = buildRecentReadsBlock(paths, "/work");
+		const lines = out.split("\n").filter((l) => l.startsWith("- "));
+		expect(lines).toHaveLength(50);
+		// Tail kept: last path present, an early one dropped.
+		expect(out).toContain("- f59.ts");
+		expect(out).not.toContain("- f0.ts");
+	});
+});
+
 // =============================================================================
 // runSpeculationCheck — with mocked @earendil-works/pi-ai
 // =============================================================================
@@ -158,10 +313,12 @@ function makeCtx(opts: {
 	ui: FakeUI;
 	registry: FakeRegistry;
 	signal?: AbortSignal;
+	cwd?: string;
 }) {
 	return {
 		hasUI: opts.hasUI,
 		signal: opts.signal,
+		cwd: opts.cwd ?? "/work",
 		ui: {
 			notify: (message: string, type?: string) => {
 				opts.ui.notifyCalls.push({ message, type });
@@ -269,6 +426,108 @@ describe("runSpeculationCheck", () => {
 
 		expect(completeMock).not.toHaveBeenCalled();
 		expect(pi.sendMessageCalls).toHaveLength(0);
+	});
+
+	test("passes static SYSTEM prompt + user message with response and evidence sections", async () => {
+		let capturedCtx: { systemPrompt?: string; messages: { content: { type: string; text?: string }[] }[] } | undefined;
+		completeMock.mockImplementation(async (_model, ctx) => {
+			capturedCtx = ctx as typeof capturedCtx;
+			return {
+				content: [{ type: "text", text: '{"ok":true}' }],
+			} as { content: { type: string; text?: string }[] };
+		});
+		const ui: FakeUI = { notifyCalls: [] };
+		const registry: FakeRegistry = { authResult: { ok: true, apiKey: "k" } };
+		const pi: FakePi = { sendMessageCalls: [] };
+		const state = createSessionState();
+		state.enabled = true;
+
+		const messages = [
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: "opening src/foo.ts" },
+					{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "src/foo.ts" } },
+				],
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				isError: false,
+				content: [{ type: "text", text: "export const FOO = 42;" }],
+			},
+			{ role: "assistant", content: [{ type: "text", text: "final answer" }] },
+		] as unknown as AgentEndEvent["messages"];
+
+		await runSpeculationCheck(
+			makePi(pi) as unknown as ExtensionAPI,
+			makeCtx({ hasUI: true, ui, registry }) as unknown as ExtensionContext,
+			{ type: "agent_end", messages },
+			state,
+		);
+
+		expect(capturedCtx).toBeDefined();
+		// Rubric is in systemPrompt, not the user message.
+		expect(capturedCtx?.systemPrompt).toBeDefined();
+		expect(capturedCtx?.systemPrompt).toContain("fact-check verifier");
+		expect(capturedCtx?.systemPrompt).toContain("<TOOL_CALLS>");
+		expect(capturedCtx?.systemPrompt).not.toContain("<TOOL_RESULTS>");
+		expect(capturedCtx?.systemPrompt).toContain('{"ok": true}');
+
+		// User message contains the assistant response and the evidence block.
+		const userText = capturedCtx?.messages[0]?.content[0]?.text ?? "";
+		expect(userText).toContain("<ASSISTANT_RESPONSE>");
+		expect(userText).toContain("final answer");
+		expect(userText).toContain("</ASSISTANT_RESPONSE>");
+		expect(userText).toContain("<TOOL_CALLS>");
+		expect(userText).toContain("[1] read");
+		expect(userText).toContain('"path":"src/foo.ts"');
+		// Tool output is not sent — calls-only summary.
+		expect(userText).not.toContain("<TOOL_RESULTS>");
+		expect(userText).not.toContain("export const FOO = 42;");
+		// Recent-reads section is present; empty form when no tracker is wired.
+		expect(capturedCtx?.systemPrompt).toContain("<RECENT_READS>");
+		expect(userText).toContain("(no recent reads)");
+	});
+
+	test("surfaces tracker recentPaths as a <RECENT_READS> block in the user message", async () => {
+		let capturedCtx:
+			| { systemPrompt?: string; messages: { content: { type: string; text?: string }[] }[] }
+			| undefined;
+		completeMock.mockImplementation(async (_model, ctx) => {
+			capturedCtx = ctx as typeof capturedCtx;
+			return {
+				content: [{ type: "text", text: '{"ok":true}' }],
+			} as { content: { type: string; text?: string }[] };
+		});
+		const ui: FakeUI = { notifyCalls: [] };
+		const registry: FakeRegistry = { authResult: { ok: true, apiKey: "k" } };
+		const pi: FakePi = { sendMessageCalls: [] };
+		const state = createSessionState();
+		state.enabled = true;
+
+		// Tracker reports an in-cwd file and an out-of-cwd file. The in-cwd
+		// path should render relative; the out-of-cwd one stays absolute.
+		const tracker: ReadTrackerLike = {
+			recentPaths: () => ["/work/src/api.ts", "/other/lib.ts"],
+		};
+
+		await runSpeculationCheck(
+			makePi(pi) as unknown as ExtensionAPI,
+			makeCtx({ hasUI: true, ui, registry, cwd: "/work" }) as unknown as ExtensionContext,
+			makeEvent("the api.ts handler validates the token"),
+			state,
+			{ tracker },
+		);
+
+		const userText = capturedCtx?.messages[0]?.content[0]?.text ?? "";
+		expect(userText).toContain("<RECENT_READS>");
+		expect(userText).toContain("</RECENT_READS>");
+		// In-cwd path is relative; out-of-cwd path stays absolute.
+		expect(userText).toContain("- src/api.ts");
+		expect(userText).toContain("- /other/lib.ts");
+		expect(userText).not.toContain("(no recent reads)");
 	});
 
 	test("verdict {ok: true} → no sendMessage", async () => {

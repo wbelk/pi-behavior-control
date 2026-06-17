@@ -203,11 +203,16 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	)("session_switch", handleSessionEnter);
 
 	// =========================================================================
-	// before_agent_start — per-turn read-log clear (hook 5)
+	// before_agent_start — per-turn read-log prune (hook 5)
+	// Advances the turn counter and ages out reads older than the sliding
+	// window, instead of wiping the whole log every turn. Recent reads stay
+	// available so cross-turn citations remain grounded; the edit gate's
+	// mtime/size revalidation still blocks edits to any file changed since
+	// it was read.
 	// =========================================================================
 	pi.on("before_agent_start", () => {
 		if (!state.enabled) return;
-		tracker.clear();
+		tracker.prune();
 	});
 
 	// =========================================================================
@@ -227,8 +232,14 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	pi.on("tool_call", (event, ctx) => {
 		if (!state.enabled) return;
 
+		// Some pi shims dispatch `read`/`edit`/`write` events whose `input`
+		// is not the expected `{ path }` shape (e.g. harness tools that
+		// happen to share the type name). Guard the path field so the
+		// hook silently no-ops instead of throwing into the agent loop.
 		if (isToolCallEventType("read", event)) {
-			tracker.record(path.resolve(ctx.cwd, event.input.path));
+			const rawPath = (event.input as { path?: unknown }).path;
+			if (typeof rawPath !== "string" || rawPath.length === 0) return;
+			tracker.record(path.resolve(ctx.cwd, rawPath));
 			return;
 		}
 
@@ -236,7 +247,9 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 			isToolCallEventType("edit", event) ||
 			isToolCallEventType("write", event)
 		) {
-			const blocked = tracker.check(path.resolve(ctx.cwd, event.input.path));
+			const rawPath = (event.input as { path?: unknown }).path;
+			if (typeof rawPath !== "string" || rawPath.length === 0) return;
+			const blocked = tracker.check(path.resolve(ctx.cwd, rawPath));
 			if (blocked) return blocked;
 		}
 	});
@@ -273,7 +286,7 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	// agent_end — speculation check (hook 7)
 	// =========================================================================
 	pi.on("agent_end", async (event, ctx) => {
-		await runSpeculationCheck(pi, ctx, event, state);
+		await runSpeculationCheck(pi, ctx, event, state, { tracker });
 	});
 
 	// =========================================================================
