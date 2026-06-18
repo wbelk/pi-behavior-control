@@ -8,6 +8,7 @@ import { readSessionGate } from "./config.ts";
 import { ReadTracker } from "./read-tracker.ts";
 import { buildReviewInstruction } from "./review-prompt.ts";
 import { loadRules } from "./rules-source.ts";
+import { registerSpeculationRenderer } from "./speculation-renderer.ts";
 import {
 	createSessionState,
 	resetSessionState,
@@ -22,6 +23,12 @@ import { chooseVerifier, resolveVerifier } from "./verifier-source.ts";
 export default function pluginFactory(pi: ExtensionAPI): void {
 	const state = createSessionState();
 	const tracker = new ReadTracker();
+
+	// Register the compact renderer for speculation-flag custom messages so
+	// the hook-7 verdicts print as a single attributed line instead of the
+	// default full-width [customType] box. Registration is load-safe (no
+	// runtime actions) and inert under runtimes that ignore the renderer.
+	registerSpeculationRenderer(pi);
 
 	// =========================================================================
 	// Session entry (initial start OR transition via /new, /resume, /fork)

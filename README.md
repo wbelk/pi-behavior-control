@@ -69,6 +69,8 @@ After every successful `edit` or `write`, the tool result is augmented with a ve
 
 The exact wording lives in `src/review-prompt.ts` (`REVIEW_BRIEF_TEXT`) — a verbatim port of `review-file.sh` from the upstream Claude `behavior-hooks` skill.
 
+The brief is injected into the edit/write tool result, so it is wrapped in an attribution frame (`── pi-behavior-control: post-edit review ──` … `── end pi-behavior-control review ──`) to make clear it is the plugin speaking, not the edit tool's own output.
+
 ## Speculation check
 
 When the agent finishes its full response (`agent_end`), the chosen verifier model evaluates the last assistant text against this rubric (verbatim from the upstream Claude `behavior-hooks` skill):
@@ -85,6 +87,8 @@ When the agent finishes its full response (`agent_end`), the chosen verifier mod
 
 The grader returns `{"ok": true}` or `{"ok": false, "reason": "..."}`. On a flag, pi-behavior-control queues a follow-up message ("address this speculation") that the agent runs before the user gets their turn back.
 
+The flag is shown via a registered message renderer (`src/speculation-renderer.ts`) as a compact, attributed annotation — a `⚠ pi-behavior-control · speculation` tag line with the reason wrapped beneath it — instead of the default full-width `[customType]` box. Collapsed (the default) the reason is clamped to a few lines; it expands with the rest of the tool output (the "expand tools" keybinding, `ctrl+o` by default in OMP).
+
 **Failure handling.** Anything that prevents the speculation check from running is surfaced as an `error`-level notification, every time it happens, so you can switch verifier or disable the plugin:
 
 - Verifier model not registered
@@ -99,8 +103,11 @@ The only silent path is when `ctx.signal` aborts mid-check — that means a new 
 ## Environment variables
 
 ```
-PI_BEHAVIOR_CONTROL=on|off                                    # session gate; unset = prompt
+PI_BEHAVIOR_CONTROL=on|off          # session gate; unset = prompt
+PI_CODING_AGENT_DIR=/path/to/agent  # override agent-dir detection (leading ~ expanded); else ~/.omp/agent or ~/.pi/agent
 ```
+
+`PI_CODING_AGENT_DIR` wins over filesystem detection and determines where the persisted config (`<agentDir>/behavior-control/config.json`) and the global `coding-rules.md` fallback are resolved.
 
 ## Development
 
@@ -118,6 +125,13 @@ bun test                             # unit tests
 ```
 
 Source files live under `src/`. No build step — pi loads `.ts` directly via jiti (upstream) or Bun's native TypeScript runtime (OMP).
+
+## Compatibility
+
+Runtime-agnostic: the same source runs under upstream pi (`@earendil-works/pi-coding-agent`) and oh-my-pi (`@oh-my-pi/pi-coding-agent`). Both runtimes are declared as optional peer dependencies, so installing under either one pulls only what it needs.
+
+- No build step or bundler — pi loads the `.ts` entrypoint directly via jiti (upstream) or Bun's native TypeScript runtime (OMP).
+- The agent directory is auto-detected (`~/.omp/agent` for OMP, `~/.pi/agent` for upstream), overridable via `PI_CODING_AGENT_DIR`.
 
 ## License
 

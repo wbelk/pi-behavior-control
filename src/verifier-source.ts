@@ -27,7 +27,7 @@ const SESSION_MODEL_LABEL = "Use current session model";
  * Resolve the verifier choice without prompting. Used at every `agent_end`
  * by hook 7 to decide which model to call.
  *
- * Order: env override → persisted config → default Haiku.
+ * Order: persisted config → default Haiku.
  */
 export function resolveVerifier(): VerifierChoice {
 	const config = loadConfig();
@@ -49,9 +49,8 @@ export interface ChooseVerifierResult {
  * Per-startup selector. Called from session_start / session_switch when
  * the gate has been accepted, and from `/behavior-control:set-verifier`.
  *
- *   1. env override → return silently, `persisted = false`.
- *   2. !hasUI (print/json) → return persisted or default silently.
- *   3. hasUI → enumerate `ctx.modelRegistry.getAvailable()`, build the
+ *   1. !hasUI (print/json) → return persisted or default silently.
+ *   2. hasUI → enumerate `ctx.modelRegistry.getAvailable()`, build the
  *      option list, pre-select previous choice, show selector.
  *      - cancel → `persisted = false`, returns previous.
  *      - same choice as previous → `persisted = false` (no rewrite).

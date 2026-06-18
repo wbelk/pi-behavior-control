@@ -18,9 +18,22 @@ Approval gate:
 - If your prior response claimed completion: confirm \`node scripts/run-tests.js\` ran with 0 failing this turn. If not, retract the claim.
 - If any part of the approved scope was skipped or altered: list each deviation.`;
 
+// Attribution frame wrapped around the brief when it is appended to an
+// edit/write tool result. The brief is injected into the tool result's
+// `content`, so without a frame it renders as if it were the edit tool's own
+// output -- no label, indistinguishable from the diff/result. The
+// header/footer make it unambiguous that pi-behavior-control authored this
+// text, for a human skimming the transcript and for the agent reading the
+// tool result.
+const REVIEW_HEADER =
+	"\u2500\u2500 pi-behavior-control: post-edit review \u2500\u2500";
+const REVIEW_FOOTER = "\u2500\u2500 end pi-behavior-control review \u2500\u2500";
+
 /**
  * Build the post-edit review reminder appended to a successful edit/write
- * tool result.
+ * tool result. The brief (plus optional rules) is wrapped in an attribution
+ * frame (`REVIEW_HEADER` / `REVIEW_FOOTER`) so it is not mistaken for the
+ * edit tool's own output when rendered inside the tool result.
  *
  * If `rules` is a non-empty string, the coding-rules text is appended after
  * the review brief (mirrors the original script's behavior of inlining the
@@ -28,11 +41,16 @@ Approval gate:
  * omitted entirely — the brief itself stands alone.
  */
 export function buildReviewInstruction(rules?: string | null): string {
-	if (rules && rules.length > 0) {
-		return `${REVIEW_BRIEF}\n\nCoding rules reference:\n${rules}`;
-	}
-	return REVIEW_BRIEF;
+	const body =
+		rules && rules.length > 0
+			? `${REVIEW_BRIEF}\n\nCoding rules reference:\n${rules}`
+			: REVIEW_BRIEF;
+	return `${REVIEW_HEADER}\n${body}\n${REVIEW_FOOTER}`;
 }
 
 /** Exposed for tests that want to assert on the brief without invoking. */
 export const REVIEW_BRIEF_TEXT = REVIEW_BRIEF;
+
+/** Exposed for tests: the attribution frame wrapped around the brief. */
+export const REVIEW_HEADER_TEXT = REVIEW_HEADER;
+export const REVIEW_FOOTER_TEXT = REVIEW_FOOTER;
