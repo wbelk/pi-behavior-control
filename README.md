@@ -6,6 +6,7 @@
 2. If a file changed on disk between the read and the edit, the agent is forced to re-read.
 3. Every successful edit is followed by a "review the change you just made" instruction the agent has to address.
 4. After every agent response, a verifier model scans the message for unverified claims (no file:line citations, hedge words, etc.); flagged responses get a follow-up prompt asking the agent to fix the speculation.
+5. If a `response-rules-reminder.md` exists, its contents are appended to the system prompt before every agent turn, so your standing response rules ride along on every turn.
 
 ## Install
 
@@ -47,6 +48,16 @@ The post-edit review reminder cites the project's coding rules inline when prese
 If both files are absent at session start, you'll get a one-time notification telling you to create one if you want rule citations.
 
 `coding-rules.md` is for the moment-of-edit reminder, not the system prompt — pi/OMP already auto-load `AGENTS.md`/`CLAUDE.md` for that.
+
+## Response-rules reminder (injected every turn)
+
+You may like to inject response rules inline at every agent turn to remind the agent and keep the agent on track with your expectations. You should keep these as brief as possible. For example, you may like to tell the agent to be concise and clear, as opposed to being overly verbose. [See an example here](example/response-rules-reminder.md).
+
+Resolution order (same as coding-rules):
+
+1. `./response-rules-reminder.md` in the current working directory (project-local; always wins).
+2. `<agentDir>/response-rules-reminder.md` (global fallback, where `<agentDir>` is `~/.pi/agent` or `~/.omp/agent`).
+3. None — nothing is injected; the system prompt is left untouched.
 
 ## Read-before-edit gate
 
@@ -107,7 +118,7 @@ PI_BEHAVIOR_CONTROL=on|off          # session gate; unset = prompt
 PI_CODING_AGENT_DIR=/path/to/agent  # override agent-dir detection (leading ~ expanded); else ~/.omp/agent or ~/.pi/agent
 ```
 
-`PI_CODING_AGENT_DIR` wins over filesystem detection and determines where the persisted config (`<agentDir>/behavior-control/config.json`) and the global `coding-rules.md` fallback are resolved.
+`PI_CODING_AGENT_DIR` wins over filesystem detection and determines where the persisted config (`<agentDir>/behavior-control/config.json`) and the global `coding-rules.md` / `response-rules-reminder.md` fallbacks are resolved.
 
 ## Development
 

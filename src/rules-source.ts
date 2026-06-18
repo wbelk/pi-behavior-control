@@ -1,5 +1,5 @@
-import * as fs from "node:fs";
 import * as path from "node:path";
+import { __clearCachedFileCache, loadCachedFile } from "./cached-file.ts";
 import { agentDir } from "./user-config.ts";
 
 // Resolves the coding-rules text used by hook 6's post-edit review prompt.
@@ -12,7 +12,7 @@ import { agentDir } from "./user-config.ts";
 //
 // Both candidate paths are re-checked on every call so a mid-session
 // addition is picked up on the next edit. File contents are cached by
-// (path, mtime, size); cache hit returns text without re-reading.
+// (path, mtime, size) in the shared cached-file loader.
 
 export type RulesSource = "cwd" | "master";
 
@@ -23,66 +23,22 @@ export interface ResolvedRules {
 	path: string;
 }
 
-interface CacheEntry {
-	modifiedAt: number;
-	size: number;
-	text: string;
-}
-
-// Module-level cache. Shared across all hook 6 fires within one extension
-// instance. Keyed by absolute path; same cache covers both cwd and master
-// candidate paths.
-const cache = new Map<string, CacheEntry>();
-
 const RULES_FILENAME = "coding-rules.md";
 
 export function loadRules(cwd: string): ResolvedRules | null {
-	const cwdPath = path.join(cwd, RULES_FILENAME);
-	const cwdResult = tryLoad(cwdPath, "cwd");
-	if (cwdResult) return cwdResult;
+	const cwdResult = loadCachedFile(path.join(cwd, RULES_FILENAME));
+	if (cwdResult) return { ...cwdResult, source: "cwd" };
 
-	const masterPath = path.join(agentDir(), RULES_FILENAME);
-	const masterResult = tryLoad(masterPath, "master");
-	if (masterResult) return masterResult;
+	const masterResult = loadCachedFile(path.join(agentDir(), RULES_FILENAME));
+	if (masterResult) return { ...masterResult, source: "master" };
 
 	return null;
 }
 
-function tryLoad(absPath: string, source: RulesSource): ResolvedRules | null {
-	let stat: fs.Stats;
-	try {
-		stat = fs.statSync(absPath);
-	} catch {
-		// File doesn't exist — drop any stale cache entry to bound memory.
-		cache.delete(absPath);
-		return null;
-	}
-	if (!stat.isFile()) {
-		cache.delete(absPath);
-		return null;
-	}
-
-	const cached = cache.get(absPath);
-	if (cached && cached.modifiedAt === stat.mtimeMs && cached.size === stat.size) {
-		return { text: cached.text, source, path: absPath };
-	}
-
-	let text: string;
-	try {
-		text = fs.readFileSync(absPath, "utf-8");
-	} catch {
-		cache.delete(absPath);
-		return null;
-	}
-	cache.set(absPath, { modifiedAt: stat.mtimeMs, size: stat.size, text });
-	return { text, source, path: absPath };
-}
-
 /**
- * Test-only: drop all cache entries. Double-underscore marks the API as
- * not for production callers (cache is otherwise managed transparently
- * via stat-based invalidation).
+ * Test-only: drop all cache entries. Re-exported (rather than re-imported by
+ * tests) so existing imports `from "./rules-source.ts"` keep working.
  */
 export function __clearCacheForTests(): void {
-	cache.clear();
+	__clearCachedFileCache();
 }

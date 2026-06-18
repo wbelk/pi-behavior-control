@@ -8,6 +8,12 @@ import { readSessionGate } from "./config.ts";
 import { ReadTracker } from "./read-tracker.ts";
 import { buildReviewInstruction } from "./review-prompt.ts";
 import { loadRules } from "./rules-source.ts";
+import { buildReminderAppend } from "./reminder-prompt.ts";
+import {
+	loadResponseReminder,
+	reminderCandidatePaths,
+	responseReminderFileExists,
+} from "./reminder-source.ts";
 import { registerSpeculationRenderer } from "./speculation-renderer.ts";
 import {
 	createSessionState,
@@ -95,16 +101,19 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 			await chooseVerifier(ctx);
 
 			if (!loadRules(ctx.cwd)) {
-				await promptForMissingRules(ctx, st);
+				await promptForMissingRules(ctx);
 			}
 
-			// Final banner — only when still enabled after all prompts.
-			// User picking "Disable pi-behavior-control" in the rules dialog
-			// flips st.enabled to false; in that case the disable notify
-			// already fired and we skip the active banner.
-			if (st.enabled) {
-				showActiveBanner(ctx);
+			// Actionable dialog if no response-rules-reminder.md exists at
+			// either candidate path. Mirrors promptForMissingRules. Trigger
+			// keys on filesystem existence (not loader content): once the
+			// user has created the file via this dialog, an empty body must
+			// not cause the dialog to re-fire next session.
+			if (!responseReminderFileExists(ctx.cwd)) {
+				await promptForMissingReminder(ctx);
 			}
+
+			showActiveBanner(ctx);
 		} catch {
 			// Dialog cancelled, signal aborted, etc. Whatever state was
 			// reached stays put — no need to recover.
@@ -123,23 +132,25 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 		const rulesLabel = rules
 			? `${rules.source} (${rules.path})`
 			: "none (skipping citations in reviews)";
+		const reminder = loadResponseReminder(ctx.cwd);
+		const reminderLabel = reminder
+			? `${reminder.source} (${reminder.path})`
+			: "none (system prompt unchanged)";
 		ctx.ui.notify(
-			`⚔️  pi-behavior-control active — verifier: ${verifierLabel}; rules: ${rulesLabel}. Type /behavior-control:status for details.`,
+			`⚔️  pi-behavior-control active — verifier: ${verifierLabel}; rules: ${rulesLabel}; reminder: ${reminderLabel}. Type /behavior-control:status for details.`,
 			"info",
 		);
 	};
 
 	/**
 	 * Actionable prompt fired when neither `./coding-rules.md` (cwd) nor
-	 * `<agentDir>/coding-rules.md` (master) exists. Offers four paths:
+	 * `<agentDir>/coding-rules.md` (master) exists. Offers three paths:
 	 *   1. Create empty file at cwd
 	 *   2. Create empty file at agent dir (global)
 	 *   3. Continue without rules this session
-	 *   4. Disable pi-behavior-control for this session
 	 */
 	const promptForMissingRules = async (
 		ctx: Parameters<Parameters<ExtensionAPI["on"]>[1]>[1],
-		st: typeof state,
 	): Promise<void> => {
 		const cwdPath = path.join(ctx.cwd, "coding-rules.md");
 		const masterPath = path.join(agentDir(), "coding-rules.md");
@@ -161,25 +172,10 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 		const createCwd = `Create empty ${cwdPath} (project-local)`;
 		const createMaster = `Create empty ${masterPath} (global)`;
 		const skip = "Continue without rules this session";
-		const disable = "Disable pi-behavior-control";
 
-		const choice = await ctx.ui.select(title, [
-			createCwd,
-			createMaster,
-			skip,
-			disable,
-		]);
+		const choice = await ctx.ui.select(title, [createCwd, createMaster, skip]);
 
 		if (choice === undefined || choice === skip) return;
-
-		if (choice === disable) {
-			st.enabled = false;
-			ctx.ui.notify(
-				"pi-behavior-control: disabled for this session",
-				"info",
-			);
-			return;
-		}
 
 		const target = choice === createCwd ? cwdPath : masterPath;
 		try {
@@ -187,6 +183,60 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 			fs.writeFileSync(target, "", "utf-8");
 			ctx.ui.notify(
 				`pi-behavior-control: created ${target}. Edit it to add your rules.`,
+				"info",
+			);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			ctx.ui.notify(
+				`pi-behavior-control: failed to create ${target}: ${message}`,
+				"error",
+			);
+		}
+	};
+
+	/**
+	 * Actionable prompt fired when neither `./response-rules-reminder.md`
+	 * (cwd) nor `<agentDir>/response-rules-reminder.md` (master) exists on
+	 * disk. Mirrors `promptForMissingRules` — same 3-option select:
+	 *   1. Create empty file at cwd
+	 *   2. Create empty file at agent dir (global)
+	 *   3. Continue without reminder this session
+	 *
+	 * Trigger is filesystem existence (see runInteractiveSetup) so an empty
+	 * file the user just created via this dialog does not re-fire the prompt
+	 * next session.
+	 */
+	const promptForMissingReminder = async (
+		ctx: Parameters<Parameters<ExtensionAPI["on"]>[1]>[1],
+	): Promise<void> => {
+		const { cwdPath, masterPath } = reminderCandidatePaths(ctx.cwd);
+
+		const title = [
+			"\u001b[1;33m⚠ pi-behavior-control: no response-rules-reminder.md found\u001b[0m",
+			"",
+			"Would you like to inject an agent reminder for response rules at every turn?",
+			"",
+			`Response rules are read from (cwd first, then global fallback):`,
+			`  • project-local: ${cwdPath}`,
+			`  • global fallback: ${masterPath}`,
+			"",
+			"What would you like to do?",
+		].join("\n");
+
+		const createCwd = `Create empty project file: ${cwdPath}`;
+		const createMaster = `Create empty global file: ${masterPath}`;
+		const skip = "Continue without reminder for this session";
+
+		const choice = await ctx.ui.select(title, [createCwd, createMaster, skip]);
+
+		if (choice === undefined || choice === skip) return;
+
+		const target = choice === createCwd ? cwdPath : masterPath;
+		try {
+			fs.mkdirSync(path.dirname(target), { recursive: true });
+			fs.writeFileSync(target, "", "utf-8");
+			ctx.ui.notify(
+				`pi-behavior-control: created ${target}. Edit it to add your response rules.`,
 				"info",
 			);
 		} catch (err) {
@@ -210,16 +260,28 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	)("session_switch", handleSessionEnter);
 
 	// =========================================================================
-	// before_agent_start — per-turn read-log prune (hook 5)
+	// before_agent_start — per-turn read-log prune + response-rules reminder (hook 5)
 	// Advances the turn counter and ages out reads older than the sliding
 	// window, instead of wiping the whole log every turn. Recent reads stay
 	// available so cross-turn citations remain grounded; the edit gate's
 	// mtime/size revalidation still blocks edits to any file changed since
 	// it was read.
 	// =========================================================================
-	pi.on("before_agent_start", () => {
+	pi.on("before_agent_start", (event, ctx) => {
 		if (!state.enabled) return;
 		tracker.prune();
+
+		// Inject the response-rules reminder into the system prompt for this
+		// turn. Absent / empty file -> loadResponseReminder returns null and we
+		// leave the prompt untouched (the feature is fully opt-in).
+		const reminder = loadResponseReminder(ctx.cwd);
+		if (!reminder) return;
+		// Guard against runtime shims that omit `systemPrompt` — concatenating
+		// `undefined` would inject the literal string into the prompt header.
+		const basePrompt = event.systemPrompt ?? "";
+		return {
+			systemPrompt: buildReminderAppend(basePrompt, reminder.text),
+		};
 	});
 
 	// =========================================================================
@@ -349,12 +411,24 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 					: `${verifier.provider}/${verifier.id}`;
 			const rules = loadRules(ctx.cwd);
 			const rulesLabel = rules ? `${rules.source} (${rules.path})` : "none";
+			const reminder = loadResponseReminder(ctx.cwd);
+			let reminderLabel: string;
+			if (reminder) {
+				reminderLabel = `${reminder.source} (${reminder.path})`;
+			} else if (responseReminderFileExists(ctx.cwd)) {
+				const { cwdPath, masterPath } = reminderCandidatePaths(ctx.cwd);
+				reminderLabel = `empty (looked at ${cwdPath} and ${masterPath})`;
+			} else {
+				const { cwdPath, masterPath } = reminderCandidatePaths(ctx.cwd);
+				reminderLabel = `none (looked at ${cwdPath} and ${masterPath})`;
+			}
 			const envGate = readSessionGate() ?? "unset";
 
 			const lines = [
 				`enabled: ${state.enabled}`,
 				`verifier: ${verifierLabel}`,
 				`rules: ${rulesLabel}`,
+				`reminder: ${reminderLabel}`,
 				`agent dir: ${agentDir()}`,
 				`env PI_BEHAVIOR_CONTROL: ${envGate}`,
 			];
