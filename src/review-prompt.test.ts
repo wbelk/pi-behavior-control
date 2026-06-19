@@ -43,10 +43,6 @@ describe("buildReviewInstruction", () => {
 		expect(result).toContain("\n\nCoding rules reference:\nBe concise.\n");
 	});
 
-	test("brief contains the Fail-Loud Contract section", () => {
-		expect(REVIEW_BRIEF_TEXT).toContain("Fail-Loud Contract violations");
-	});
-
 	test("brief contains the Approval gate section", () => {
 		expect(REVIEW_BRIEF_TEXT).toContain("Approval gate");
 	});

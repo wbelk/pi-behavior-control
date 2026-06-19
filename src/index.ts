@@ -5,7 +5,9 @@ import {
 	isToolCallEventType,
 } from "@earendil-works/pi-coding-agent";
 import { readSessionGate } from "./config.ts";
+import { InspectionTracker } from "./inspection-tracker.ts";
 import { ReadTracker } from "./read-tracker.ts";
+import { ToolCallTracker } from "./tool-call-tracker.ts";
 import { buildReviewInstruction } from "./review-prompt.ts";
 import { loadRules } from "./rules-source.ts";
 import { buildReminderAppend } from "./reminder-prompt.ts";
@@ -23,13 +25,33 @@ import { runSpeculationCheck } from "./speculation.ts";
 import { agentDir } from "./user-config.ts";
 import { chooseVerifier, resolveVerifier } from "./verifier-source.ts";
 
+// Tool names whose `tool_result` events feed `inspectionTracker`. Covers
+// pi's built-in `search`/`grep`/`multi_grep`/`find`/`ast_grep`/`lsp` plus
+// fff's three tools (`ffgrep`, `fffind`, `fff-multi-grep`). When fff is
+// installed in override mode the tool name is the same as pi's built-in
+// (`grep`/`find`/`multi_grep`), so the built-in entry covers both. The
+// path extractor is tolerant of either renderer's output format so
+// matching on the name is enough — no per-tool parser.
+const INSPECTION_TOOL_NAMES: ReadonlySet<string> = new Set([
+	"search",
+	"grep",
+	"multi_grep",
+	"find",
+	"ast_grep",
+	"lsp",
+	"ffgrep",
+	"fffind",
+	"fff-multi-grep",
+]);
+
 // pi-behavior-control entrypoint. Wires the five active hooks and four
 // slash commands described in the plan.
 
 export default function pluginFactory(pi: ExtensionAPI): void {
 	const state = createSessionState();
 	const tracker = new ReadTracker();
-
+	const inspectionTracker = new InspectionTracker();
+	const toolCallTracker = new ToolCallTracker();
 	// Register the compact renderer for speculation-flag custom messages so
 	// the hook-7 verdicts print as a single attributed line instead of the
 	// default full-width [customType] box. Registration is load-safe (no
@@ -270,6 +292,8 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", (event, ctx) => {
 		if (!state.enabled) return;
 		tracker.prune();
+		inspectionTracker.prune();
+		toolCallTracker.prune();
 
 		// Inject the response-rules reminder into the system prompt for this
 		// turn. Absent / empty file -> loadResponseReminder returns null and we
@@ -289,10 +313,12 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	// Runs unconditionally so any lingering state is dropped on quit/reload.
 	// =========================================================================
 	pi.on("session_shutdown", () => {
-		// Reset the in-memory session state too (not just the read tracker)
-		// so any one-shot notifications fire fresh on the next session_start.
+		// Reset the in-memory session state too (not just the trackers) so any
+		// one-shot notifications fire fresh on the next session_start.
 		resetSessionState(state);
 		tracker.clear();
+		inspectionTracker.clear();
+		toolCallTracker.clear();
 	});
 
 	// =========================================================================
@@ -329,6 +355,21 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	pi.on("tool_result", (event, ctx) => {
 		if (!state.enabled) return;
 		if (event.isError) return;
+
+		// Record every successful tool result as low-fidelity, deduped evidence
+		// for the verifier's <TOOL_CALLS> block (same window as inspections).
+		toolCallTracker.record(event.toolName, event.input);
+
+		// Inspection-evidence branch: search/find/grep/lsp/ast_grep and fff's
+		// equivalents surface files the agent inspected. Feed their rendered
+		// text content to the inspection tracker so the verifier's
+		// <RECENT_INSPECTIONS> block sees them. Does NOT unlock the edit gate
+		// — ReadTracker stays the single source of truth for "may I edit?".
+		if (INSPECTION_TOOL_NAMES.has(event.toolName)) {
+			inspectionTracker.recordFromToolContent(event.content, ctx.cwd);
+			return;
+		}
+
 		// Direct toolName check instead of isEditToolResult/isWriteToolResult
 		// guards — the guards aren't exported by OMP's pi-coding-agent shim
 		// (upstream-only). Both runtimes discriminate ToolResultEvent by
@@ -352,10 +393,34 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	});
 
 	// =========================================================================
+	// user_bash — `!`/`!!` bash executions feed the tool-call tracker
+	// User-initiated bash never reaches tool_call/tool_result, so record it
+	// here as a synthetic `bash!` entry. `!!` is excluded from LLM context, so
+	// it is excluded from the evidence too.
+	// =========================================================================
+	pi.on("user_bash", (event) => {
+		if (!state.enabled) return;
+		if (event.excludeFromContext) return;
+		toolCallTracker.record("bash!", { command: event.command });
+	});
+
+	// =========================================================================
 	// agent_end — speculation check (hook 7)
 	// =========================================================================
 	pi.on("agent_end", async (event, ctx) => {
-		await runSpeculationCheck(pi, ctx, event, state, { tracker });
+		// Pre-union read + inspection paths so speculation.ts stays decoupled
+		// from the tracker classes. Dedup via Set; canonical paths from both
+		// trackers compare cleanly because both canonicalize via realpathSync.
+		const recentPaths = Array.from(
+			new Set([
+				...tracker.recentPaths(),
+				...inspectionTracker.recentPaths(),
+			]),
+		);
+		await runSpeculationCheck(pi, ctx, event, state, {
+			recentPaths,
+			recentCalls: toolCallTracker.recentCalls(),
+		});
 	});
 
 	// =========================================================================
