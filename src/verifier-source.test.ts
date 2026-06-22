@@ -106,6 +106,7 @@ describe("chooseVerifier", () => {
 			selectResult: "anthropic/claude-sonnet-4-5",
 			selectCalls: [],
 			availableModels: [
+				{ provider: "anthropic", id: "claude-haiku-4-5" },
 				{ provider: "anthropic", id: "claude-sonnet-4-5" },
 			],
 		};
@@ -113,8 +114,8 @@ describe("chooseVerifier", () => {
 		expect(result.choice).toEqual({ provider: "anthropic", id: "claude-sonnet-4-5" });
 		expect(result.persisted).toBe(true);
 		expect(stub.selectCalls).toHaveLength(1);
-		// Haiku (the default verifier) is always offered; it is the previous
-		// implicit choice on first run, so it floats to position 0.
+		// Haiku (the default verifier) is the previous implicit choice on
+		// first run, so when it's available it floats to position 0.
 		expect(stub.selectCalls[0]?.options[0]).toBe("anthropic/claude-haiku-4-5");
 		expect(loadConfig()).toEqual({
 			verifier: { provider: "anthropic", id: "claude-sonnet-4-5" },
@@ -127,6 +128,7 @@ describe("chooseVerifier", () => {
 			hasUI: true,
 			selectResult: "anthropic/claude-haiku-4-5",
 			selectCalls: [],
+			availableModels: [{ provider: "anthropic", id: "claude-haiku-4-5" }],
 		};
 		const result = await callChoose(stub);
 		expect(result.choice).toEqual({ provider: "anthropic", id: "claude-haiku-4-5" });
@@ -167,7 +169,7 @@ describe("chooseVerifier", () => {
 		expect(options[options.length - 1]).toBe("Use current session model");
 	});
 
-	test("previously-persisted model that's no longer available still appears", async () => {
+	test("previously-persisted model that's no longer available is hidden", async () => {
 		saveConfig({ verifier: { provider: "deprecated", id: "old-model" } });
 		const stub: StubUI = {
 			hasUI: true,
@@ -177,18 +179,71 @@ describe("chooseVerifier", () => {
 		};
 		await callChoose(stub);
 		const options = stub.selectCalls[0]?.options ?? [];
-		expect(options).toContain("deprecated/old-model");
-		expect(options[0]).toBe("deprecated/old-model"); // pre-selected
+		// Unavailable persisted choice is no longer surfaced; only the
+		// available model and the session-model sentinel appear.
+		expect(options).not.toContain("deprecated/old-model");
+		expect(options).toEqual([
+			"anthropic/claude-haiku-4-5",
+			"Use current session model",
+		]);
+	});
+
+	test("default Haiku is hidden when anthropic auth is unavailable", async () => {
+		// No persisted config → previous defaults to Haiku, but Haiku is
+		// absent from the available list, so it must not be surfaced.
+		const stub: StubUI = {
+			hasUI: true,
+			selectResult: undefined,
+			selectCalls: [],
+			availableModels: [{ provider: "openai", id: "gpt-4" }],
+		};
+		await callChoose(stub);
+		const options = stub.selectCalls[0]?.options ?? [];
+		expect(options).not.toContain("anthropic/claude-haiku-4-5");
+		expect(options).toEqual(["openai/gpt-4", "Use current session model"]);
+	});
+
+	test("empty registry: only the session-model option is offered", async () => {
+		const stub: StubUI = {
+			hasUI: true,
+			selectResult: undefined,
+			selectCalls: [],
+			availableModels: [],
+		};
+		await callChoose(stub);
+		expect(stub.selectCalls[0]?.options).toEqual(["Use current session model"]);
 	});
 
 	test("interactive cancelled (undefined): keeps previous, persisted=false", async () => {
 		const original: VerifierChoice = { provider: "anthropic", id: "claude-sonnet-4-5" };
 		saveConfig({ verifier: original });
-		const stub: StubUI = { hasUI: true, selectResult: undefined, selectCalls: [] };
+		const stub: StubUI = {
+			hasUI: true,
+			selectResult: undefined,
+			selectCalls: [],
+			availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5" }],
+		};
 		const result = await callChoose(stub);
 		expect(result.choice).toEqual(original);
 		expect(result.persisted).toBe(false);
 		expect(loadConfig()).toEqual({ verifier: original });
+	});
+
+	test("interactive cancelled with unavailable previous: falls back to session-model", async () => {
+		// Persisted pick lost auth (absent from availableModels). Cancelling
+		// must not strand the user on a verifier that only errors — it falls
+		// back to the always-valid session model and persists that.
+		saveConfig({ verifier: { provider: "deprecated", id: "old-model" } });
+		const stub: StubUI = {
+			hasUI: true,
+			selectResult: undefined,
+			selectCalls: [],
+			availableModels: [{ provider: "anthropic", id: "claude-haiku-4-5" }],
+		};
+		const result = await callChoose(stub);
+		expect(result.choice).toBe("session-model");
+		expect(result.persisted).toBe(true);
+		expect(loadConfig()).toEqual({ verifier: "session-model" });
 	});
 
 	test("interactive 'use session model' choice persists as the string sentinel", async () => {

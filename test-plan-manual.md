@@ -8,11 +8,11 @@ Run in order — each section builds on the previous. Skip to specific categorie
 |---|---|---|
 | 1 | Fresh `omp` launch (no env vars set) | Gate prompt: "Run pi-behavior-control this session?" with Yes/No, Yes is default. |
 | 2 | Press Enter (accept Yes) | Verifier selector appears immediately after. |
-| 3 | Press Enter at verifier (accept Haiku) | Session starts normally. `/behavior-control:status` shows `enabled: true`, `verifier: anthropic/claude-haiku-4-5`. |
-| 4 | `/new` (start new session in same omp) | Gate prompt appears AGAIN. Verifier selector appears again with Haiku pre-selected. |
+| 3 | Press Enter at verifier (accept Haiku) | Session starts normally. `/behavior-control:status` shows `enabled: true`, `verifier: anthropic/claude-haiku-4-5`. (Haiku is listed/pre-selected only when Anthropic auth is configured; otherwise it isn't offered — pick any available model or "Use current session model".) |
+| 4 | `/new` (start new session in same omp) | Gate prompt appears AGAIN. Verifier selector appears again with Haiku pre-selected (when Anthropic auth is configured). |
 | 5 | Quit omp; relaunch with `PI_BEHAVIOR_CONTROL=off omp` | No gate prompt, no verifier prompt. `/behavior-control:status` shows `enabled: false`. |
 | 6 | Quit; relaunch with `PI_BEHAVIOR_CONTROL=on omp` | No gate prompt. Verifier selector still appears. `enabled: true`. |
-| 7 | In the current omp session, run `/behavior-control:set-verifier` and pick Sonnet. Quit; relaunch. | Gate prompt. Verifier selector with **Sonnet** pre-selected (because that was your last persisted choice). |
+| 7 | In the current omp session, run `/behavior-control:set-verifier` and pick Sonnet. Quit; relaunch. | Gate prompt. Verifier selector with **Sonnet** pre-selected — assuming Sonnet still has configured auth; an unavailable persisted pick is no longer listed or pre-selected. |
 
 ## Rules-source notification
 
@@ -70,6 +70,7 @@ Run in order — each section builds on the previous. Skip to specific categorie
 |---|---|---|
 | 34 | Pick Sonnet via `/behavior-control:set-verifier`; quit; relaunch; gate yes | Verifier selector pre-selects Sonnet. `~/.omp/agent/behavior-control/config.json` contains `"verifier": {"provider":"anthropic","id":"claude-sonnet-4-5"}`. |
 | 35 | Pick Disable (gate=no); quit; relaunch | Gate prompt fires fresh (gate decision is NOT persisted). |
+| 36 | Hand-edit config `verifier` to an unavailable model (e.g. `{"provider":"deprecated","id":"old-model"}`); relaunch; gate yes; press Esc to cancel the verifier selector | Selector does not list the unavailable pick. Cancelling falls back to **Use current session model**: `/behavior-control:status` shows `verifier: session-model` and config.json now contains `"verifier": "session-model"`. |
 
 ## What if something looks wrong
 

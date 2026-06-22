@@ -113,6 +113,8 @@ The only silent path is when `ctx.signal` aborts mid-check — that means a new 
 
 The session-entry flow (gate prompt → verifier selector → coding-rules / response-rules dialogs → active banner) runs on a fresh session **and** on in-session transitions. Upstream pi rolls `/new`, `/resume`, and `/fork` into `session_start`; OMP fires `session_start` on launch and a separate `session_switch` for those transitions, so the plugin registers both (`src/index.ts`).
 
+The verifier selector lists only models with configured auth, plus *Use current session model* (always valid). If the pre-selected pick — your persisted choice, or the default Haiku on first run — isn't available, it isn't shown; cancelling the selector in that state falls back to *Use current session model* and persists it, so a session never runs on a verifier that can only error. The runtime check itself stays fail-loud (see above): a persisted-but-unavailable verifier that you never re-pick still surfaces the per-turn error notifications.
+
 In a headless / no-UI run (`!ctx.hasUI`, e.g. `print` / `json` one-shot modes) there is nobody to answer prompts: unless `PI_BEHAVIOR_CONTROL=off`, the plugin enables itself silently with defaults and skips every dialog. The speculation check also no-ops without a UI, since there is no follow-up turn to deliver into.
 
 ## Environment variables

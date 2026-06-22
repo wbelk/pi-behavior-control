@@ -68,7 +68,7 @@ export async function chooseVerifier(ctx: ExtensionContext): Promise<ChooseVerif
 		return { choice: previous, persisted: false };
 	}
 
-	const ordered = orderOptions(buildOptions(ctx, previous), previous);
+	const ordered = orderOptions(buildOptions(ctx), previous);
 	const labels = ordered.map((o) => o.label);
 
 	const title = [
@@ -79,6 +79,17 @@ export async function chooseVerifier(ctx: ExtensionContext): Promise<ChooseVerif
 
 	const chosen = await ctx.ui.select(title, labels);
 	if (chosen === undefined) {
+		// Cancelled. A previous pick that's no longer available would only
+		// produce per-turn "no API key" errors, so repair to the always-
+		// valid session model and persist it (the runtime reads the
+		// persisted value). An available previous pick is left untouched.
+		if (
+			previous !== "session-model" &&
+			!ordered.some((o) => choicesEqual(o.value, previous))
+		) {
+			saveConfigSafely({ ...(config ?? {}), verifier: "session-model" });
+			return { choice: "session-model", persisted: true };
+		}
 		return { choice: previous, persisted: false };
 	}
 
@@ -101,17 +112,16 @@ interface VerifierOption {
 /**
  * Build the selector options from the live model registry.
  *
- *   - One entry per available model: label is "<provider>/<id>".
+ *   - One entry per available model (auth configured): label is
+ *     "<provider>/<id>". The default Haiku and any previously-persisted
+ *     choice are included here too, but only when they are actually
+ *     available — an unavailable model is never surfaced.
  *   - "Use current session model" always appears (resolved per-call from
- *     `ctx.model`).
- *   - If `previous` is an explicit model that isn't currently available
- *     (e.g. provider lost auth), include it anyway so the user still sees
- *     their persisted choice rather than being silently switched.
- *   - The default Haiku is included even when not registered, so the
- *     "Run pi-behavior-control unconfigured" path still has the documented
- *     default to pick.
+ *     `ctx.model`) and is always a valid pick.
+ *   - If nothing is available (empty or throwing registry), the only
+ *     option is "Use current session model".
  */
-function buildOptions(ctx: ExtensionContext, previous: VerifierChoice): VerifierOption[] {
+function buildOptions(ctx: ExtensionContext): VerifierOption[] {
 	const seen = new Set<string>();
 	const options: VerifierOption[] = [];
 
@@ -134,18 +144,10 @@ function buildOptions(ctx: ExtensionContext, previous: VerifierChoice): Verifier
 				}
 			}
 		} catch {
-			// Registry shape surprise — fall through to defaults below.
+			// Registry shape surprise — leave the model list empty; the
+			// session-model sentinel below is still offered.
 		}
 	}
-
-	// Always offer the documented default so users can pick it even when
-	// the provider isn't registered yet (they'll get auth warnings later,
-	// which is fine — they at least see the choice).
-	add(DEFAULT_VERIFIER);
-
-	// Keep the user's previous explicit choice visible even if it's no
-	// longer in the registry's available list (e.g. provider deauthed).
-	if (previous !== "session-model") add(previous);
 
 	options.sort((a, b) => a.label.localeCompare(b.label));
 
