@@ -55,6 +55,75 @@ function lookupModel(provider: string, id: string): unknown {
 	return fn ? fn(provider, id) : undefined;
 }
 
+type RuntimeModelEntry = { provider?: unknown; id?: unknown };
+
+interface RuntimeModelRegistry {
+	find?: (provider: string, id: string) => unknown;
+	getAvailable?: () => readonly RuntimeModelEntry[];
+	getAll?: () => readonly RuntimeModelEntry[];
+}
+
+/**
+ * Resolve the verifier against the live runtime registry first, then fall back
+ * to the bundled pi-ai catalog. OMP can discover Cursor models at runtime that
+ * are selectable via ctx.modelRegistry but absent from bundled pi-ai.
+ */
+function lookupVerifierModel(ctx: ExtensionContext, provider: string, id: string): unknown {
+	const registry = ctx.modelRegistry as RuntimeModelRegistry | undefined;
+
+	const directMatch = lookupRegistryFind(registry, provider, id);
+	if (directMatch) return directMatch;
+
+	const availableMatch = lookupRegistryList(registry, "getAvailable", provider, id);
+	if (availableMatch) return availableMatch;
+
+	const allMatch = lookupRegistryList(registry, "getAll", provider, id);
+	if (allMatch) return allMatch;
+
+	return lookupModel(provider, id);
+}
+
+function lookupRegistryFind(
+	registry: RuntimeModelRegistry | undefined,
+	provider: string,
+	id: string,
+): unknown {
+	if (!registry || typeof registry.find !== "function") return undefined;
+	try {
+		return registry.find.call(registry, provider, id);
+	} catch {
+		return undefined;
+	}
+}
+
+function lookupRegistryList(
+	registry: RuntimeModelRegistry | undefined,
+	method: "getAvailable" | "getAll",
+	provider: string,
+	id: string,
+): unknown {
+	if (!registry) return undefined;
+	const getModels = registry[method];
+	if (typeof getModels !== "function") return undefined;
+
+	try {
+		return findRegistryModel(getModels.call(registry), provider, id);
+	} catch {
+		return undefined;
+	}
+}
+
+function findRegistryModel(
+	models: readonly RuntimeModelEntry[],
+	provider: string,
+	id: string,
+): unknown {
+	for (const model of models) {
+		if (model.provider === provider && model.id === id) return model;
+	}
+	return undefined;
+}
+
 /**
  * Cross-runtime auth lookup. Upstream pi exposes
  * `getApiKeyAndHeaders(model) → Promise<{ok, apiKey?, headers?}>`; OMP
@@ -198,12 +267,7 @@ async function runSpeculationCheckInner(
 		}
 		return;
 	}
-	// Look up the model. Upstream pi-ai (@earendil-works/pi-ai) exports
-	// `getModel`; OMP's pi-ai (@oh-my-pi/pi-ai, served via the legacy
-	// pi-ai shim) renamed it to `getBundledModel`. Same shape, different
-	// name. Probe the namespace at runtime so the plugin works under
-	// both runtimes without a build-time conditional.
-	const model = lookupModel(verifier.provider, verifier.id) as
+	const model = lookupVerifierModel(ctx, verifier.provider, verifier.id) as
 		| Parameters<typeof complete>[0]
 		| undefined;
 	if (!model) {

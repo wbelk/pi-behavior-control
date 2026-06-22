@@ -216,6 +216,9 @@ interface FakeUI {
 
 interface FakeRegistry {
 	authResult: { ok: boolean; apiKey?: string; headers?: Record<string, string> };
+	findModel?: { provider: string; id: string };
+	availableModels?: { provider: string; id: string }[];
+	allModels?: { provider: string; id: string }[];
 }
 
 interface FakePi {
@@ -244,6 +247,13 @@ function makeCtx(opts: {
 		model: { provider: "anthropic", id: "claude-haiku-4-5" },
 		modelRegistry: {
 			getApiKeyAndHeaders: () => Promise.resolve(opts.registry.authResult),
+			find: (provider: string, id: string) => {
+				const model = opts.registry.findModel;
+				if (model?.provider === provider && model.id === id) return model;
+				return undefined;
+			},
+			getAvailable: () => opts.registry.availableModels ?? [],
+			getAll: () => opts.registry.allModels ?? [],
 		},
 	};
 }
@@ -760,6 +770,44 @@ describe("runSpeculationCheck", () => {
 			else process.env.PI_CODING_AGENT_DIR = prevAgentDir;
 			fs.rmSync(tmpAgent, { recursive: true, force: true });
 		}
+	});
+
+	test("uses runtime registry model when bundled lookup misses", async () => {
+		getModelMock.mockImplementation(() => undefined);
+		const registryModel = { provider: "cursor", id: "gpt-5.4-mini-high" };
+		let capturedModel: unknown;
+		completeMock.mockImplementation(async (model) => {
+			capturedModel = model;
+			return {
+				content: [{ type: "text", text: '{"ok":true}' }],
+			} as { content: { type: string; text?: string }[] };
+		});
+		fs.mkdirSync(path.join(tmp, "behavior-control"), { recursive: true });
+		fs.writeFileSync(
+			path.join(tmp, "behavior-control", "config.json"),
+			JSON.stringify({ verifier: registryModel }),
+			"utf-8",
+		);
+		const ui: FakeUI = { notifyCalls: [] };
+		const registry: FakeRegistry = {
+			authResult: { ok: true, apiKey: "k" },
+			findModel: registryModel,
+		};
+		const pi: FakePi = { sendMessageCalls: [] };
+		const state = createSessionState();
+		state.enabled = true;
+		const ctx = makeCtx({ hasUI: true, ui, registry }) as unknown as ExtensionContext;
+
+		await runSpeculationCheck(
+			makePi(pi) as unknown as ExtensionAPI,
+			ctx,
+			makeEvent("grounded response"),
+			state,
+		);
+
+		expect(capturedModel).toBe(registryModel);
+		expect(completeMock).toHaveBeenCalledTimes(1);
+		expect(ui.notifyCalls).toHaveLength(0);
 	});
 
 	test("getModel returns undefined → fires error notify every time", async () => {
