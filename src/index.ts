@@ -4,26 +4,26 @@ import {
 	type ExtensionAPI,
 	isToolCallEventType,
 } from "@earendil-works/pi-coding-agent";
-import { readSessionGate } from "./config.ts";
-import { InspectionTracker } from "./inspection-tracker.ts";
-import { ReadTracker } from "./read-tracker.ts";
-import { ToolCallTracker } from "./tool-call-tracker.ts";
-import { buildReviewInstruction } from "./review-prompt.ts";
-import { loadRules } from "./rules-source.ts";
-import { buildReminderAppend } from "./reminder-prompt.ts";
+import { readSessionGate } from "./session/config.ts";
+import { InspectionTracker } from "./tracking/inspection-tracker.ts";
+import { ReadTracker } from "./tracking/read-tracker.ts";
+import { ToolCallTracker } from "./tracking/tool-call-tracker.ts";
+import { buildReviewInstruction } from "./post-edit-review/review-prompt.ts";
+import { loadRules } from "./post-edit-review/rules-source.ts";
+import { buildReminderAppend } from "./response-rules/reminder-prompt.ts";
 import {
 	loadResponseReminder,
 	reminderCandidatePaths,
 	responseReminderFileExists,
-} from "./reminder-source.ts";
-import { registerSpeculationRenderer } from "./speculation-renderer.ts";
+} from "./response-rules/reminder-source.ts";
+import { registerSpeculationRenderer } from "./speculation-check/speculation-renderer.ts";
 import {
 	createSessionState,
 	resetSessionState,
-} from "./session-state.ts";
-import { runSpeculationCheck } from "./speculation.ts";
-import { agentDir } from "./user-config.ts";
-import { chooseVerifier, resolveVerifier } from "./verifier-source.ts";
+} from "./session/session-state.ts";
+import { runSpeculationCheck } from "./speculation-check/speculation.ts";
+import { agentDir } from "./session/user-config.ts";
+import { chooseVerifier, resolveVerifier } from "./speculation-check/verifier-source.ts";
 
 // Tool names whose `tool_result` events feed `inspectionTracker`. Covers
 // pi's built-in `search`/`grep`/`multi_grep`/`find`/`ast_grep`/`lsp` plus

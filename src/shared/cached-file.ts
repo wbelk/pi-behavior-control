@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 
-// Stat-cached file loader shared by `rules-source.ts` and `reminder-source.ts`.
+// Stat-cached file loader shared by post-edit-review/rules-source.ts and response-rules/reminder-source.ts.
 //
 // Both resolvers want the same thing: look up an absolute path, return its
 // text, and avoid re-reading on every call when nothing has changed. The

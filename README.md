@@ -70,7 +70,7 @@ pi-behavior-control intercepts every `read`, `edit`, and `write` tool call:
 - `edit` or `write` against a path whose mtime or size has changed since the read → blocked with `"File has been modified since you read it. Re-read before editing."`.
 - `write` against a non-existent path → allowed (new-file creation).
 
-The read log is **not** wiped every turn. `before_agent_start` calls `prune()`, which advances a turn counter and evicts only entries older than the sliding window (default 4 turns — `DEFAULT_WINDOW_TURNS` in `src/read-tracker.ts`). A read on turn N keeps authorizing edits through turn N+3, provided the file's mtime and size are unchanged since the read — that mtime/size revalidation (previous bullet) is what makes the wider window safe. The log is fully cleared only on `session_shutdown`.
+The read log is **not** wiped every turn. `before_agent_start` calls `prune()`, which advances a turn counter and evicts only entries older than the sliding window (default 4 turns — `DEFAULT_WINDOW_TURNS` in `src/tracking/turn-window.ts`). A read on turn N keeps authorizing edits through turn N+3, provided the file's mtime and size are unchanged since the read — that mtime/size revalidation (previous bullet) is what makes the wider window safe. The log is fully cleared only on `session_shutdown`.
 
 ## Post-edit review reminder
 
@@ -79,7 +79,7 @@ After every successful `edit` or `write`, the tool result is augmented with a re
 1. **Review brief** — asks the agent to re-read the file as a senior engineer/architect and check style, elegance, efficiency, design/architecture consistency, caller/upstream/downstream tracing, soft-failure conditional logic, conditional args that should be required, DRY, and test intent (tests must match design intent and cover edge cases, not just exercise the code as written). Broken logic should break the app and the tests.
 2. **Approval gate** — auto-fix findings directly unless intent is unclear; if the prior response claimed completion, confirm tests ran with 0 failing this turn; if any approved scope was skipped or altered, list each deviation.
 
-The exact wording lives in `src/review-prompt.ts` (`REVIEW_BRIEF_TEXT`).
+The exact wording lives in `src/post-edit-review/review-prompt.ts` (`REVIEW_BRIEF_TEXT`).
 
 The brief is injected into the edit/write tool result, so it is wrapped in an attribution frame (`── pi-behavior-control: post-edit review ──` … `── end pi-behavior-control review ──`) to make clear it is the plugin speaking, not the edit tool's own output.
 
@@ -87,16 +87,16 @@ The brief is injected into the edit/write tool result, so it is wrapped in an at
 
 When the agent finishes its full response (`agent_end`), the chosen verifier model judges the last assistant message against a grounding rubric. The verifier never sees raw tool output — instead it gets two evidence blocks, both covering the same recent-turn sliding window:
 
-- `<TOOL_CALLS>` — tools the agent ran recently, one deduped line each as `name target` (e.g. `read src/foo.ts`, `grep parseConfig`, `bash bun test`). Low-fidelity by design: the target is a single salient argument (path/pattern/command), never full arguments or tool output. Fed by `src/tool-call-tracker.ts`, capped at the 50 most-recent.
-- `<RECENT_INSPECTIONS>` — canonical paths the agent read or surfaced via `search`/`grep`/`find`/`ast_grep`/`lsp` (and fff's equivalents) recently (paths only, most-recent first, capped at 50). It unions the read-before-edit log with the inspection-evidence tracker (`src/inspection-tracker.ts`), so a file is grounding whether the agent `read` it or turned it up in a search.
+- `<TOOL_CALLS>` — tools the agent ran recently, one deduped line each as `name target` (e.g. `read src/foo.ts`, `grep parseConfig`, `bash bun test`). Low-fidelity by design: the target is a single salient argument (path/pattern/command), never full arguments or tool output. Fed by `src/tracking/tool-call-tracker.ts`, capped at the 50 most-recent.
+- `<RECENT_INSPECTIONS>` — canonical paths the agent read or surfaced via `search`/`grep`/`find`/`ast_grep`/`lsp` (and fff's equivalents) recently (paths only, most-recent first, capped at 50). It unions the read-before-edit log with the inspection-evidence tracker (`src/tracking/inspection-tracker.ts`), so a file is grounding whether the agent `read` it or turned it up in a search.
 
-All three trackers (reads, inspections, tool calls) share one sliding-turn-window base (`src/turn-window.ts`, default 4 turns), so evidence grounded by a read, a search hit, or a recent tool call all have the same lifetime. A file, path, or command in either block is grounding — a claim isn't flagged merely for being absent from one.
+All three trackers (reads, inspections, tool calls) share one sliding-turn-window base (`src/tracking/turn-window.ts`, default 4 turns), so evidence grounded by a read, a search hit, or a recent tool call all have the same lifetime. A file, path, or command in either block is grounding — a claim isn't flagged merely for being absent from one.
 
-A response **passes** if it cites `file:line` references, its factual claims concern a file/path/command present in either evidence block, or it is empty/short/an acknowledgment. A response is **flagged** if it describes specific code behavior with no `file:line` citation and the file is in neither block, uses hedge words (may / might / could / probably / likely / should work) to assert how code behaves, or asserts facts about a file in neither block. When uncertain the verifier defaults to a pass. The exact wording lives in `src/speculation.ts` (`SYSTEM_PROMPT`).
+A response **passes** if it cites `file:line` references, its factual claims concern a file/path/command present in either evidence block, or it is empty/short/an acknowledgment. A response is **flagged** if it describes specific code behavior with no `file:line` citation and the file is in neither block, uses hedge words (may / might / could / probably / likely / should work) to assert how code behaves, or asserts facts about a file in neither block. When uncertain the verifier defaults to a pass. The exact wording lives in `src/speculation-check/speculation.ts` (`SYSTEM_PROMPT`).
 
 The grader returns `{"ok": true}` or `{"ok": false, "reason": "..."}`. On a flag, pi-behavior-control queues a follow-up carrying the verifier's reason, delivered as a follow-up turn (`deliverAs: "followUp"`, `triggerTurn: true`) so the agent must address it before the user gets their turn back.
 
-The flag is shown via a registered message renderer (`src/speculation-renderer.ts`) as a compact, attributed annotation — a `⚠ pi-behavior-control · speculation` tag line with the reason wrapped beneath it — instead of the default full-width `[customType]` box. Collapsed (the default) the reason is clamped to a few lines; it expands with the rest of the tool output (the "expand tools" keybinding, `ctrl+o` by default in OMP).
+The flag is shown via a registered message renderer (`src/speculation-check/speculation-renderer.ts`) as a compact, attributed annotation — a `⚠ pi-behavior-control · speculation` tag line with the reason wrapped beneath it — instead of the default full-width `[customType]` box. Collapsed (the default) the reason is clamped to a few lines; it expands with the rest of the tool output (the "expand tools" keybinding, `ctrl+o` by default in OMP).
 
 **Failure handling.** Anything that prevents the speculation check from running is surfaced as an `error`-level notification, every time it happens, so you can switch verifier or disable the plugin:
 

@@ -54,8 +54,8 @@ describe("tokenize", () => {
 
 	test("splits on backticks so markdown code-spans like `path:line` separate", () => {
 		// This is the canonical citation format prompted to the agent — see
-		// the SYSTEM_PROMPT example in speculation.ts. Without backtick
-		// splitting, the wrapped path stays glued and never resolves.
+		// the SYSTEM_PROMPT example in ../speculation-check/speculation.ts.
+		// Without backtick splitting, the wrapped path stays glued and never resolves.
 		expect(tokenize("see `services/sources.js:47` for context")).toEqual([
 			"see",
 			"services/sources.js:47",
@@ -246,7 +246,7 @@ describe("recordFromText", () => {
 
 	test("records files cited inside markdown code spans like `path:line`", () => {
 		// The agent is prompted to cite in this exact format (see the example
-		// in src/speculation.ts SYSTEM_PROMPT). Pre-fix this case missed
+		// in src/speculation-check/speculation.ts SYSTEM_PROMPT). Pre-fix this case missed
 		// every backtick-wrapped citation because the entire `path:line`
 		// stayed glued to surrounding backticks and failed to resolve.
 		const tracker = new InspectionTracker();

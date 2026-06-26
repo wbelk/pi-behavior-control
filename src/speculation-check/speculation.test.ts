@@ -36,7 +36,7 @@ import {
 	parseVerdict,
 	runSpeculationCheck,
 } from "./speculation.ts";
-import { createSessionState } from "./session-state.ts";
+import { createSessionState } from "../session/session-state.ts";
 
 // =============================================================================
 // Pure functions — no mocking required

@@ -8,8 +8,8 @@ import * as PiAi from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { Check } from "typebox/value";
-import type { SessionState } from "./session-state.ts";
-import type { VerifierChoice, VerifierModel } from "./user-config.ts";
+import type { SessionState } from "../session/session-state.ts";
+import type { VerifierChoice, VerifierModel } from "../session/user-config.ts";
 import { resolveVerifier } from "./verifier-source.ts";
 
 // Hook 7: speculation check. Runs the chosen verifier model against the

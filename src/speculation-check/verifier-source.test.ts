@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, saveConfig, type VerifierChoice } from "./user-config.ts";
+import { loadConfig, saveConfig, type VerifierChoice } from "../session/user-config.ts";
 import {
 	type ChooseVerifierResult,
 	chooseVerifier,

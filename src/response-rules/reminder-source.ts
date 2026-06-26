@@ -1,12 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { __clearCachedFileCache, loadCachedFile } from "./cached-file.ts";
-import { agentDir } from "./user-config.ts";
+import { __clearCachedFileCache, loadCachedFile } from "../shared/cached-file.ts";
+import { agentDir } from "../session/user-config.ts";
 
 // Resolves the response-rules-reminder text injected into the system prompt
 // at the start of every agent turn (hook 5 / before_agent_start).
-//
-// Resolution order (mirrors rules-source.ts):
+// Resolution order mirrors ../post-edit-review/rules-source.ts:
 //   1. <cwd>/response-rules-reminder.md (project-local; always wins if present)
 //   2. <agentDir>/response-rules-reminder.md (global master; runtime-detected)
 //   3. null (neither exists, or the resolved file is empty/whitespace-only)

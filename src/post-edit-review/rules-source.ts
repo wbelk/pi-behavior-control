@@ -1,6 +1,6 @@
 import * as path from "node:path";
-import { __clearCachedFileCache, loadCachedFile } from "./cached-file.ts";
-import { agentDir } from "./user-config.ts";
+import { __clearCachedFileCache, loadCachedFile } from "../shared/cached-file.ts";
+import { agentDir } from "../session/user-config.ts";
 
 // Resolves the coding-rules text used by hook 6's post-edit review prompt.
 // Spec: section 8a step (b) and section 7 hook 6.

@@ -6,7 +6,7 @@ import {
 	type UserConfig,
 	type VerifierChoice,
 	type VerifierModel,
-} from "./user-config.ts";
+} from "../session/user-config.ts";
 
 // Verifier (speculation-check) model resolution + per-session selector UI.
 // Spec: section 8b and section 7 hook 7.

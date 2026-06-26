@@ -1,6 +1,6 @@
 // System-prompt append for the response-rules reminder injected at the start
 // of every agent turn (before_agent_start). The reminder text is wrapped in an
-// attribution frame -- matching the post-edit review frame in review-prompt.ts
+// attribution frame -- matching the post-edit review frame in ../post-edit-review/review-prompt.ts
 // -- so that if the system prompt is ever surfaced (e.g. /export, prompt
 // inspectors) it is unambiguous that pi-behavior-control authored this block
 // rather than the user's own base prompt.
