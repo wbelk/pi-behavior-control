@@ -24,6 +24,8 @@ import {
 import { runSpeculationCheck } from "./speculation-check/speculation.ts";
 import { agentDir } from "./session/user-config.ts";
 import { chooseVerifier, resolveVerifier } from "./speculation-check/verifier-source.ts";
+import { registerPiReviewSubagent } from "./uncommitted-review/pi-review-subagent.ts";
+import { registerReviewCommand } from "./uncommitted-review/review-command.ts";
 
 // Tool names whose `tool_result` events feed `inspectionTracker`. Covers
 // pi's built-in `search`/`grep`/`multi_grep`/`find`/`ast_grep`/`lsp` plus
@@ -44,7 +46,7 @@ const INSPECTION_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"fff-multi-grep",
 ]);
 
-// pi-behavior-control entrypoint. Wires the five active hooks and four
+// pi-behavior-control entrypoint. Wires the five active hooks and five
 // slash commands described in the plan.
 
 export default function pluginFactory(pi: ExtensionAPI): void {
@@ -57,6 +59,7 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 	// default full-width [customType] box. Registration is load-safe (no
 	// runtime actions) and inert under runtimes that ignore the renderer.
 	registerSpeculationRenderer(pi);
+	registerPiReviewSubagent(pi);
 
 	// =========================================================================
 	// Session entry (initial start OR transition via /new, /resume, /fork)
@@ -500,4 +503,6 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
+
+	registerReviewCommand(pi);
 }

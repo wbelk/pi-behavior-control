@@ -34,6 +34,7 @@ omp plugin link /absolute/path/to/pi-behavior-control
 - `/behavior-control:disable` — turn it off for the rest of this session. No-op + notify if already off.
 - `/behavior-control:set-verifier` — re-prompt for the speculation verifier.
 - `/behavior-control:status` — print enabled state, active verifier, which rules file is loaded, agent dir, and env overrides.
+- `/behavior-control:review` — run the uncommitted-change review process: spawn a read-only reviewer to audit your uncommitted diff, loop on the findings, and publish a report. Any arguments become a change-intent hint (e.g. `/behavior-control:review tighten the auth refactor`).
 
 None of these persist across sessions (except `set-verifier`, which overwrites the persisted config).
 
@@ -60,6 +61,16 @@ Resolution order (same as coding-rules):
 3. None — nothing is injected; the system prompt is left untouched.
 
 Like coding-rules, if neither file exists at session start you get an actionable dialog offering to create an empty `response-rules-reminder.md` at the project root or under `<agentDir>`, or to skip it this session. The trigger is filesystem existence, so once the file exists (even empty) the dialog will not re-fire next session.
+
+## Uncommitted change review
+
+`/behavior-control:review` runs an adversarial, read-only review of your **uncommitted** changes before you commit, then loops on the findings. The plugin can't spawn a subagent itself, so the command detects the runtime's reviewer mechanism and injects a protocol the current agent drives:
+
+- **OMP** — uses the native `task` tool with `agent: "reviewer"` and an `irc` re-audit loop.
+- **upstream pi** — uses the bundled `uncommitted_review` tool, which spawns an isolated child `pi --mode json -p --no-session --no-extensions` running a read-only reviewer persona. This needs `pi` resolvable from the running process (it reuses the current binary); on OMP (where the current binary is not `pi`) the tool refuses and points back to the `task` path.
+- **neither available** — the command notifies that review is unavailable and stops; it never fabricates a same-session "reviewer".
+
+Before injecting, the command checks preconditions (a git repo with uncommitted changes) and short-circuits with a notice when there is nothing to review. The reviewer cites your coding rules when a `coding-rules.md` resolves (same resolution as above); with none, rule-compliance checks are skipped. The command runs regardless of the enable/disable gate.
 
 ## Read-before-edit gate
 
