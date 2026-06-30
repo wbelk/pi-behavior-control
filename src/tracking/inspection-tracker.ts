@@ -40,110 +40,110 @@ const MAX_MEMO_ENTRIES = 1000;
  * (image, etc.) are silently skipped.
  */
 export interface ToolContentBlock {
-	type: string;
-	text?: unknown;
+  type: string;
+  text?: unknown;
 }
 
 export class InspectionTracker extends TurnWindowedKeyLog<TurnEntry> {
-	// Token-resolution memo keyed by `${cwd}|${token}`. Value is the canonical
-	// absolute path on a file hit, or `null` on a miss (so we don't re-stat
-	// known-bad tokens). `Map.get` returns `undefined` for absent keys, which
-	// distinguishes "not memoized" from "memoized as miss" cleanly.
-	private readonly memo = new Map<string, string | null>();
+  // Token-resolution memo keyed by `${cwd}|${token}`. Value is the canonical
+  // absolute path on a file hit, or `null` on a miss (so we don't re-stat
+  // known-bad tokens). `Map.get` returns `undefined` for absent keys, which
+  // distinguishes "not memoized" from "memoized as miss" cleanly.
+  private readonly memo = new Map<string, string | null>();
 
-	/**
-	 * Extract plausible file paths from a tool result's rendered text and
-	 * record any that resolve to real files in `cwd`. Tolerant by design:
-	 *   - `[path/to/file#TAG]` headers (read/search/ast_grep)
-	 *   - bare path lines (fff `ffgrep`/`fffind`, built-in `find`)
-	 *   - `path:line` and `path:line:col` citations
-	 *   - `` `path:line` `` markdown code-span citations
-	 *   - `"path with space.ts"` quoted runs (paths with whitespace)
-	 *   - lsp text responses
-	 */
-	recordFromText(text: string, cwd: string): void {
-		for (const token of tokenize(text)) {
-			const cleaned = cleanToken(token);
-			if (!isPlausiblePath(cleaned)) continue;
-			const canonical = this.resolveAndStat(cleaned, cwd);
-			if (canonical === null) continue;
-			this.log.set(canonical, { turn: this.currentTurn });
-		}
-	}
+  /**
+   * Extract plausible file paths from a tool result's rendered text and
+   * record any that resolve to real files in `cwd`. Tolerant by design:
+   *   - `[path/to/file#TAG]` headers (read/search/ast_grep)
+   *   - bare path lines (fff `ffgrep`/`fffind`, built-in `find`)
+   *   - `path:line` and `path:line:col` citations
+   *   - `` `path:line` `` markdown code-span citations
+   *   - `"path with space.ts"` quoted runs (paths with whitespace)
+   *   - lsp text responses
+   */
+  recordFromText(text: string, cwd: string): void {
+    for (const token of tokenize(text)) {
+      const cleaned = cleanToken(token);
+      if (!isPlausiblePath(cleaned)) continue;
+      const canonical = this.resolveAndStat(cleaned, cwd);
+      if (canonical === null) continue;
+      this.log.set(canonical, { turn: this.currentTurn });
+    }
+  }
 
-	/**
-	 * Convenience wrapper for the `tool_result` hook in `src/index.ts`.
-	 * Iterates the runtime's content blocks, picks out text-typed ones with
-	 * a string payload, and pipes each through `recordFromText`. Non-text
-	 * blocks (image, etc.) and malformed text blocks are silently skipped.
-	 *
-	 * Extracted as a method (rather than inlined in index.ts) so the
-	 * content-shape handling is unit-testable without standing up the full
-	 * pi extension harness.
-	 */
-	recordFromToolContent(
-		content: ReadonlyArray<ToolContentBlock>,
-		cwd: string,
-	): void {
-		for (const block of content) {
-			if (block.type !== "text") continue;
-			if (typeof block.text !== "string") continue;
-			this.recordFromText(block.text, cwd);
-		}
-	}
+  /**
+   * Convenience wrapper for the `tool_result` hook in `src/index.ts`.
+   * Iterates the runtime's content blocks, picks out text-typed ones with
+   * a string payload, and pipes each through `recordFromText`. Non-text
+   * blocks (image, etc.) and malformed text blocks are silently skipped.
+   *
+   * Extracted as a method (rather than inlined in index.ts) so the
+   * content-shape handling is unit-testable without standing up the full
+   * pi extension harness.
+   */
+  recordFromToolContent(
+    content: ReadonlyArray<ToolContentBlock>,
+    cwd: string,
+  ): void {
+    for (const block of content) {
+      if (block.type !== "text") continue;
+      if (typeof block.text !== "string") continue;
+      this.recordFromText(block.text, cwd);
+    }
+  }
 
-	/**
-	 * Resolve a token to a canonical absolute path if (and only if) it points
-	 * at a regular file. Memoized per (cwd, token) — same cleaned token in the
-	 * same cwd never re-hits the filesystem. Memo is bounded; oldest entries
-	 * are evicted on overflow.
-	 */
-	private resolveAndStat(token: string, cwd: string): string | null {
-		const cacheKey = `${cwd}|${token}`;
-		const cached = this.memo.get(cacheKey);
-		if (cached !== undefined) return cached;
+  /**
+   * Resolve a token to a canonical absolute path if (and only if) it points
+   * at a regular file. Memoized per (cwd, token) — same cleaned token in the
+   * same cwd never re-hits the filesystem. Memo is bounded; oldest entries
+   * are evicted on overflow.
+   */
+  private resolveAndStat(token: string, cwd: string): string | null {
+    const cacheKey = `${cwd}|${token}`;
+    const cached = this.memo.get(cacheKey);
+    if (cached !== undefined) return cached;
 
-		const candidate = path.isAbsolute(token) ? token : path.resolve(cwd, token);
-		let canonical: string | null = null;
-		try {
-			if (fs.statSync(candidate).isFile()) {
-				canonical = fs.realpathSync(candidate);
-			}
-		} catch {
-			// not present — record the miss in the memo so we don't re-stat
-		}
+    const candidate = path.isAbsolute(token) ? token : path.resolve(cwd, token);
+    let canonical: string | null = null;
+    try {
+      if (fs.statSync(candidate).isFile()) {
+        canonical = fs.realpathSync(candidate);
+      }
+    } catch {
+      // not present — record the miss in the memo so we don't re-stat
+    }
 
-		this.memo.set(cacheKey, canonical);
-		if (this.memo.size > MAX_MEMO_ENTRIES) {
-			const oldest = this.memo.keys().next().value;
-			if (oldest !== undefined) this.memo.delete(oldest);
-		}
-		return canonical;
-	}
+    this.memo.set(cacheKey, canonical);
+    if (this.memo.size > MAX_MEMO_ENTRIES) {
+      const oldest = this.memo.keys().next().value;
+      if (oldest !== undefined) this.memo.delete(oldest);
+    }
+    return canonical;
+  }
 
-	/**
-	 * Drop everything on session shutdown so no inspection state leaks across
-	 * sessions. Also clears the resolution memo since absolute paths captured
-	 * from one project's cwd are useless to the next.
-	 */
-	clear(): void {
-		super.clear();
-		this.memo.clear();
-	}
+  /**
+   * Drop everything on session shutdown so no inspection state leaks across
+   * sessions. Also clears the resolution memo since absolute paths captured
+   * from one project's cwd are useless to the next.
+   */
+  clear(): void {
+    super.clear();
+    this.memo.clear();
+  }
 
-	/**
-	 * Canonical paths still inside the sliding window. Unioned with
-	 * ReadTracker's recentPaths() by the agent_end hook to feed the
-	 * verifier's <RECENT_INSPECTIONS> block.
-	 */
-	recentPaths(): readonly string[] {
-		return this.recentKeys();
-	}
+  /**
+   * Canonical paths still inside the sliding window. Unioned with
+   * ReadTracker's recentPaths() by the agent_end hook to feed the
+   * verifier's <RECENT_INSPECTIONS> block.
+   */
+  recentPaths(): readonly string[] {
+    return this.recentKeys();
+  }
 
-	/** Test-only snapshot. */
-	paths(): readonly string[] {
-		return this.recentKeys();
-	}
+  /** Test-only snapshot. */
+  paths(): readonly string[] {
+    return this.recentKeys();
+  }
 }
 
 // ---- Pure helpers exported for tests --------------------------------------
@@ -172,47 +172,47 @@ export class InspectionTracker extends TurnWindowedKeyLog<TurnEntry> {
  * format, which couples us back to per-renderer parsers.
  */
 export function tokenize(text: string): string[] {
-	const tokens: string[] = [];
-	const QUOTE = /["'`]/;
-	const SEPARATOR = /[\s[\](),;'"`]/;
+  const tokens: string[] = [];
+  const QUOTE = /["'`]/;
+  const SEPARATOR = /[\s[\](),;'"`]/;
 
-	// `text.charAt(i)` is used instead of `text[i]` so the access type is
-	// `string` (returns "" out of bounds) rather than `string | undefined`.
-	// All bounds are still enforced by the surrounding `i < text.length`
-	// checks; the empty string just falls through every regex test.
-	let i = 0;
-	while (i < text.length) {
-		const ch = text.charAt(i);
+  // `text.charAt(i)` is used instead of `text[i]` so the access type is
+  // `string` (returns "" out of bounds) rather than `string | undefined`.
+  // All bounds are still enforced by the surrounding `i < text.length`
+  // checks; the empty string just falls through every regex test.
+  let i = 0;
+  while (i < text.length) {
+    const ch = text.charAt(i);
 
-		if (QUOTE.test(ch)) {
-			let j = i + 1;
-			while (j < text.length && text.charAt(j) !== ch && text.charAt(j) !== "\n") {
-				j++;
-			}
-			if (j < text.length && text.charAt(j) === ch) {
-				const inner = text.slice(i + 1, j).trim();
-				if (inner.length > 0) tokens.push(inner);
-				i = j + 1;
-				continue;
-			}
-			// Unmatched: fall through to separator handling.
-			i++;
-			continue;
-		}
+    if (QUOTE.test(ch)) {
+      let j = i + 1;
+      while (j < text.length && text.charAt(j) !== ch && text.charAt(j) !== "\n") {
+        j++;
+      }
+      if (j < text.length && text.charAt(j) === ch) {
+        const inner = text.slice(i + 1, j).trim();
+        if (inner.length > 0) tokens.push(inner);
+        i = j + 1;
+        continue;
+      }
+      // Unmatched: fall through to separator handling.
+      i++;
+      continue;
+    }
 
-		if (SEPARATOR.test(ch)) {
-			i++;
-			continue;
-		}
+    if (SEPARATOR.test(ch)) {
+      i++;
+      continue;
+    }
 
-		// Accumulate a non-separator run.
-		let j = i;
-		while (j < text.length && !SEPARATOR.test(text.charAt(j))) j++;
-		tokens.push(text.slice(i, j));
-		i = j;
-	}
+    // Accumulate a non-separator run.
+    let j = i;
+    while (j < text.length && !SEPARATOR.test(text.charAt(j))) j++;
+    tokens.push(text.slice(i, j));
+    i = j;
+  }
 
-	return tokens;
+  return tokens;
 }
 
 /**
@@ -231,15 +231,15 @@ export function tokenize(text: string): string[] {
  * other side); stripping defensively is cheap.
  */
 export function cleanToken(token: string): string {
-	let cleaned = token.replace(/[.,;:!?'")\]}>`]+$/, "");
-	cleaned = cleaned.replace(/^[<([{'"`]+/, "");
-	cleaned = cleaned.replace(/#[0-9A-Fa-f]{1,8}$/, "");
-	while (true) {
-		const next = cleaned.replace(/:\d+$/, "");
-		if (next === cleaned) break;
-		cleaned = next;
-	}
-	return cleaned;
+  let cleaned = token.replace(/[.,;:!?'")\]}>`]+$/, "");
+  cleaned = cleaned.replace(/^[<([{'"`]+/, "");
+  cleaned = cleaned.replace(/#[0-9A-Fa-f]{1,8}$/, "");
+  while (true) {
+    const next = cleaned.replace(/:\d+$/, "");
+    if (next === cleaned) break;
+    cleaned = next;
+  }
+  return cleaned;
 }
 
 /**
@@ -250,8 +250,8 @@ export function cleanToken(token: string): string {
  * be reasonably bounded in length, and not be all digits.
  */
 export function isPlausiblePath(token: string): boolean {
-	if (token.length < 3 || token.length > 512) return false;
-	if (!/[/.]/.test(token)) return false;
-	if (/^\d+$/.test(token)) return false;
-	return true;
+  if (token.length < 3 || token.length > 512) return false;
+  if (!/[/.]/.test(token)) return false;
+  if (/^\d+$/.test(token)) return false;
+  return true;
 }

@@ -7,9 +7,9 @@ import * as path from "node:path";
 
 /** Injected dependencies for `resolveAgentDir` — overridable in tests. */
 export interface AgentDirInputs {
-	envValue: string | undefined;
-	homeDir: string;
-	exists: (path: string) => boolean;
+  envValue: string | undefined;
+  homeDir: string;
+  exists: (path: string) => boolean;
 }
 
 /**
@@ -25,14 +25,14 @@ export interface AgentDirInputs {
  * the newer fork and a user who has both probably wants OMP).
  */
 export function resolveAgentDir(inputs: AgentDirInputs): string {
-	if (inputs.envValue && inputs.envValue.length > 0) {
-		return path.resolve(expandHome(inputs.envValue, inputs.homeDir));
-	}
-	const ompDir = path.join(inputs.homeDir, ".omp", "agent");
-	const piDir = path.join(inputs.homeDir, ".pi", "agent");
-	if (inputs.exists(ompDir)) return ompDir;
-	if (inputs.exists(piDir)) return piDir;
-	return piDir;
+  if (inputs.envValue && inputs.envValue.length > 0) {
+    return path.resolve(expandHome(inputs.envValue, inputs.homeDir));
+  }
+  const ompDir = path.join(inputs.homeDir, ".omp", "agent");
+  const piDir = path.join(inputs.homeDir, ".pi", "agent");
+  if (inputs.exists(ompDir)) return ompDir;
+  if (inputs.exists(piDir)) return piDir;
+  return piDir;
 }
 
 /**
@@ -42,11 +42,11 @@ export function resolveAgentDir(inputs: AgentDirInputs): string {
  * without restarting.
  */
 export function agentDir(): string {
-	return resolveAgentDir({
-		envValue: process.env.PI_CODING_AGENT_DIR,
-		homeDir: os.homedir(),
-		exists: fs.existsSync,
-	});
+  return resolveAgentDir({
+    envValue: process.env.PI_CODING_AGENT_DIR,
+    homeDir: os.homedir(),
+    exists: fs.existsSync,
+  });
 }
 
 /**
@@ -55,11 +55,11 @@ export function agentDir(): string {
  * `home` defaults to `os.homedir()`; pass an override for tests.
  */
 export function expandHome(p: string, home: string = os.homedir()): string {
-	if (p === "~") return home;
-	if (p.startsWith("~/") || p.startsWith("~\\")) {
-		return path.join(home, p.slice(2));
-	}
-	return p;
+  if (p === "~") return home;
+  if (p.startsWith("~/") || p.startsWith("~\\")) {
+    return path.join(home, p.slice(2));
+  }
+  return p;
 }
 
 const CONFIG_SUBDIR = "behavior-control";
@@ -67,7 +67,7 @@ const CONFIG_FILENAME = "config.json";
 
 /** Absolute path to this plugin's persisted config file. */
 export function configPath(): string {
-	return path.join(agentDir(), CONFIG_SUBDIR, CONFIG_FILENAME);
+  return path.join(agentDir(), CONFIG_SUBDIR, CONFIG_FILENAME);
 }
 
 // =============================================================================
@@ -75,8 +75,8 @@ export function configPath(): string {
 // =============================================================================
 
 export interface VerifierModel {
-	provider: string;
-	id: string;
+  provider: string;
+  id: string;
 }
 
 /**
@@ -87,7 +87,7 @@ export interface VerifierModel {
 export type VerifierChoice = VerifierModel | "session-model";
 
 export interface UserConfig {
-	verifier?: VerifierChoice;
+  verifier?: VerifierChoice;
 }
 
 /**
@@ -96,34 +96,34 @@ export interface UserConfig {
  * persisted config" as "first run, use defaults".
  */
 export function loadConfig(): UserConfig | null {
-	const p = configPath();
-	if (!fs.existsSync(p)) return null;
-	try {
-		const raw = fs.readFileSync(p, "utf-8");
-		const parsed: unknown = JSON.parse(raw);
-		if (!parsed || typeof parsed !== "object") return null;
-		const obj = parsed as { verifier?: unknown };
-		if (obj.verifier !== undefined && !isVerifierChoice(obj.verifier)) {
-			// Persisted value is malformed (older or hand-edited config). Treat
-			// as no preference so the user is re-prompted.
-			return {};
-		}
-		return obj as UserConfig;
-	} catch {
-		return null;
-	}
+  const p = configPath();
+  if (!fs.existsSync(p)) return null;
+  try {
+    const raw = fs.readFileSync(p, "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const obj = parsed as { verifier?: unknown };
+    if (obj.verifier !== undefined && !isVerifierChoice(obj.verifier)) {
+      // Persisted value is malformed (older or hand-edited config). Treat
+      // as no preference so the user is re-prompted.
+      return {};
+    }
+    return obj as UserConfig;
+  } catch {
+    return null;
+  }
 }
 
 function isVerifierChoice(value: unknown): value is VerifierChoice {
-	if (value === "session-model") return true;
-	if (!value || typeof value !== "object") return false;
-	const m = value as Partial<VerifierModel>;
-	return (
-		typeof m.provider === "string" &&
-		m.provider.length > 0 &&
-		typeof m.id === "string" &&
-		m.id.length > 0
-	);
+  if (value === "session-model") return true;
+  if (!value || typeof value !== "object") return false;
+  const m = value as Partial<VerifierModel>;
+  return (
+    typeof m.provider === "string" &&
+    m.provider.length > 0 &&
+    typeof m.id === "string" &&
+    m.id.length > 0
+  );
 }
 
 /**
@@ -134,9 +134,9 @@ function isVerifierChoice(value: unknown): value is VerifierChoice {
  * but worth knowing about).
  */
 export function saveConfig(config: UserConfig): void {
-	const p = configPath();
-	fs.mkdirSync(path.dirname(p), { recursive: true });
-	const tmp = `${p}.tmp.${process.pid}`;
-	fs.writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
-	fs.renameSync(tmp, p);
+  const p = configPath();
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmp = `${p}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+  fs.renameSync(tmp, p);
 }

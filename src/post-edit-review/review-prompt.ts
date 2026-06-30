@@ -29,7 +29,7 @@ Approval gate:
 // text, for a human skimming the transcript and for the agent reading the
 // tool result.
 const REVIEW_HEADER =
-	"\u2500\u2500 pi-behavior-control: post-edit review \u2500\u2500";
+  "\u2500\u2500 pi-behavior-control: post-edit review \u2500\u2500";
 const REVIEW_FOOTER = "\u2500\u2500 end pi-behavior-control review \u2500\u2500";
 
 /**
@@ -44,11 +44,11 @@ const REVIEW_FOOTER = "\u2500\u2500 end pi-behavior-control review \u2500\u2500"
  * omitted entirely — the brief itself stands alone.
  */
 export function buildReviewInstruction(rules?: string | null): string {
-	const body =
-		rules && rules.length > 0
-			? `${REVIEW_BRIEF}\n\nCoding rules reference:\n${rules}`
-			: REVIEW_BRIEF;
-	return `${REVIEW_HEADER}\n${body}\n${REVIEW_FOOTER}`;
+  const body =
+    rules && rules.length > 0
+      ? `${REVIEW_BRIEF}\n\nCoding rules reference:\n${rules}`
+      : REVIEW_BRIEF;
+  return `${REVIEW_HEADER}\n${body}\n${REVIEW_FOOTER}`;
 }
 
 /** Exposed for tests that want to assert on the brief without invoking. */

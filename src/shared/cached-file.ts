@@ -12,30 +12,30 @@ import * as fs from "node:fs";
 // `coding-rules.md` and `response-rules-reminder.md` lookups.
 
 interface CacheEntry {
-	modifiedAt: number;
-	size: number;
-	text: string;
+  modifiedAt: number;
+  size: number;
+  text: string;
 }
 
 const cache = new Map<string, CacheEntry>();
 
 export interface LoadedFile {
-	text: string;
-	/** Absolute path the text was loaded from. */
-	path: string;
+  text: string;
+  /** Absolute path the text was loaded from. */
+  path: string;
 }
 
 export interface LoadOptions {
-	/**
-	 * When true, a file whose contents trim to the empty string resolves to
-	 * `null` instead of `{ text: "", path }`. Used by the reminder loader so
-	 * an empty file does not cause an empty attribution frame to be injected
-	 * into the system prompt.
-	 *
-	 * The cache entry is still written either way, so a stable empty file is
-	 * not re-read every call — only re-checked via stat.
-	 */
-	nullIfEmpty?: boolean;
+  /**
+   * When true, a file whose contents trim to the empty string resolves to
+   * `null` instead of `{ text: "", path }`. Used by the reminder loader so
+   * an empty file does not cause an empty attribution frame to be injected
+   * into the system prompt.
+   *
+   * The cache entry is still written either way, so a stable empty file is
+   * not re-read every call — only re-checked via stat.
+   */
+  nullIfEmpty?: boolean;
 }
 
 /**
@@ -44,43 +44,43 @@ export interface LoadOptions {
  * trims to empty.
  */
 export function loadCachedFile(
-	absPath: string,
-	opts?: LoadOptions,
+  absPath: string,
+  opts?: LoadOptions,
 ): LoadedFile | null {
-	let stat: fs.Stats;
-	try {
-		stat = fs.statSync(absPath);
-	} catch {
-		// File doesn't exist — drop any stale cache entry to bound memory.
-		cache.delete(absPath);
-		return null;
-	}
-	if (!stat.isFile()) {
-		cache.delete(absPath);
-		return null;
-	}
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(absPath);
+  } catch {
+    // File doesn't exist — drop any stale cache entry to bound memory.
+    cache.delete(absPath);
+    return null;
+  }
+  if (!stat.isFile()) {
+    cache.delete(absPath);
+    return null;
+  }
 
-	const cached = cache.get(absPath);
-	if (
-		cached &&
-		cached.modifiedAt === stat.mtimeMs &&
-		cached.size === stat.size
-	) {
-		if (opts?.nullIfEmpty && cached.text.trim().length === 0) return null;
-		return { text: cached.text, path: absPath };
-	}
+  const cached = cache.get(absPath);
+  if (
+    cached &&
+    cached.modifiedAt === stat.mtimeMs &&
+    cached.size === stat.size
+  ) {
+    if (opts?.nullIfEmpty && cached.text.trim().length === 0) return null;
+    return { text: cached.text, path: absPath };
+  }
 
-	let text: string;
-	try {
-		text = fs.readFileSync(absPath, "utf-8");
-	} catch {
-		cache.delete(absPath);
-		return null;
-	}
-	cache.set(absPath, { modifiedAt: stat.mtimeMs, size: stat.size, text });
+  let text: string;
+  try {
+    text = fs.readFileSync(absPath, "utf-8");
+  } catch {
+    cache.delete(absPath);
+    return null;
+  }
+  cache.set(absPath, { modifiedAt: stat.mtimeMs, size: stat.size, text });
 
-	if (opts?.nullIfEmpty && text.trim().length === 0) return null;
-	return { text, path: absPath };
+  if (opts?.nullIfEmpty && text.trim().length === 0) return null;
+  return { text, path: absPath };
 }
 
 /**
@@ -89,5 +89,5 @@ export function loadCachedFile(
  * via stat-based invalidation).
  */
 export function __clearCachedFileCache(): void {
-	cache.clear();
+  cache.clear();
 }

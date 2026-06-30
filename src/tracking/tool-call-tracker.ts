@@ -29,32 +29,32 @@ const MAX_TARGET_CHARS = 80;
  * tests.
  */
 export function toolCallKey(name: string, input: unknown): string {
-	if (input === null || typeof input !== "object") return name;
-	const record = input as Record<string, unknown>;
-	for (const key of SALIENT_KEYS) {
-		const value = record[key];
-		if (typeof value !== "string" || value.length === 0) continue;
-		const target =
-			value.length > MAX_TARGET_CHARS
-				? `${value.slice(0, MAX_TARGET_CHARS)}…`
-				: value;
-		return `${name} ${target}`;
-	}
-	return name;
+  if (input === null || typeof input !== "object") return name;
+  const record = input as Record<string, unknown>;
+  for (const key of SALIENT_KEYS) {
+    const value = record[key];
+    if (typeof value !== "string" || value.length === 0) continue;
+    const target =
+      value.length > MAX_TARGET_CHARS
+        ? `${value.slice(0, MAX_TARGET_CHARS)}…`
+        : value;
+    return `${name} ${target}`;
+  }
+  return name;
 }
 
 export class ToolCallTracker extends TurnWindowedKeyLog<TurnEntry> {
-	/**
-	 * Record a tool call by its low-fidelity dedup key. Re-recording an
-	 * identical key refreshes its turn, so a repeatedly-run call stays inside
-	 * the window instead of aging out on its first appearance.
-	 */
-	record(name: string, input: unknown): void {
-		this.log.set(toolCallKey(name, input), { turn: this.currentTurn });
-	}
+  /**
+   * Record a tool call by its low-fidelity dedup key. Re-recording an
+   * identical key refreshes its turn, so a repeatedly-run call stays inside
+   * the window instead of aging out on its first appearance.
+   */
+  record(name: string, input: unknown): void {
+    this.log.set(toolCallKey(name, input), { turn: this.currentTurn });
+  }
 
-	/** Deduplicated call descriptors still inside the window, oldest first. */
-	recentCalls(): readonly string[] {
-		return this.recentKeys();
-	}
+  /** Deduplicated call descriptors still inside the window, oldest first. */
+  recentCalls(): readonly string[] {
+    return this.recentKeys();
+  }
 }
