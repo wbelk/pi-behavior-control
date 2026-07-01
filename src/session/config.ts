@@ -12,8 +12,8 @@
 export type SessionGateValue = "on" | "off" | undefined;
 
 export function readSessionGate(): SessionGateValue {
-	const raw = process.env.PI_BEHAVIOR_CONTROL;
-	if (raw === "on" || raw === "off") return raw;
-	return undefined;
+  const raw = process.env.PI_BEHAVIOR_CONTROL;
+  if (raw === "on" || raw === "off") return raw;
+  return undefined;
 }
 

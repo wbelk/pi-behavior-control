@@ -6,9 +6,9 @@
 // rather than the user's own base prompt.
 
 const REMINDER_HEADER =
-	"\u2500\u2500 pi-behavior-control: response rules \u2500\u2500";
+  "\u2500\u2500 pi-behavior-control: response rules \u2500\u2500";
 const REMINDER_FOOTER =
-	"\u2500\u2500 end pi-behavior-control response rules \u2500\u2500";
+  "\u2500\u2500 end pi-behavior-control response rules \u2500\u2500";
 
 /**
  * Append the framed reminder block to an existing system prompt.
@@ -22,10 +22,10 @@ const REMINDER_FOOTER =
  * verbatim between the header and footer.
  */
 export function buildReminderAppend(
-	systemPrompt: string,
-	reminderText: string,
+  systemPrompt: string,
+  reminderText: string,
 ): string {
-	return `${systemPrompt}\n\n${REMINDER_HEADER}\n${reminderText}\n${REMINDER_FOOTER}`;
+  return `${systemPrompt}\n\n${REMINDER_HEADER}\n${reminderText}\n${REMINDER_FOOTER}`;
 }
 
 /** Exposed for tests: the attribution frame wrapped around the reminder. */

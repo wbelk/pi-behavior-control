@@ -17,22 +17,22 @@ import { agentDir } from "../session/user-config.ts";
 export type RulesSource = "cwd" | "master";
 
 export interface ResolvedRules {
-	text: string;
-	source: RulesSource;
-	/** Absolute path the text was loaded from. */
-	path: string;
+  text: string;
+  source: RulesSource;
+  /** Absolute path the text was loaded from. */
+  path: string;
 }
 
 const RULES_FILENAME = "coding-rules.md";
 
 export function loadRules(cwd: string): ResolvedRules | null {
-	const cwdResult = loadCachedFile(path.join(cwd, RULES_FILENAME));
-	if (cwdResult) return { ...cwdResult, source: "cwd" };
+  const cwdResult = loadCachedFile(path.join(cwd, RULES_FILENAME));
+  if (cwdResult) return { ...cwdResult, source: "cwd" };
 
-	const masterResult = loadCachedFile(path.join(agentDir(), RULES_FILENAME));
-	if (masterResult) return { ...masterResult, source: "master" };
+  const masterResult = loadCachedFile(path.join(agentDir(), RULES_FILENAME));
+  if (masterResult) return { ...masterResult, source: "master" };
 
-	return null;
+  return null;
 }
 
 /**
@@ -40,5 +40,5 @@ export function loadRules(cwd: string): ResolvedRules | null {
  * tests) so existing imports `from "./rules-source.ts"` keep working.
  */
 export function __clearCacheForTests(): void {
-	__clearCachedFileCache();
+  __clearCachedFileCache();
 }

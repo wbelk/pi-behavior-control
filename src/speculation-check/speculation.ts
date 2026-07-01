@@ -1,7 +1,7 @@
 import type {
-	AgentEndEvent,
-	ExtensionAPI,
-	ExtensionContext,
+  AgentEndEvent,
+  ExtensionAPI,
+  ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import * as path from "node:path";
 import * as PiAi from "@earendil-works/pi-ai";
@@ -47,20 +47,20 @@ const MAX_RECENT_CALLS = 50;
  * surfaces "verifier model not registered".
  */
 function lookupModel(provider: string, id: string): unknown {
-	const ns = PiAi as unknown as Record<
-		string,
-		((p: string, i: string) => unknown) | undefined
-	>;
-	const fn = ns.getModel ?? ns.getBundledModel;
-	return fn ? fn(provider, id) : undefined;
+  const ns = PiAi as unknown as Record<
+    string,
+    ((p: string, i: string) => unknown) | undefined
+  >;
+  const fn = ns.getModel ?? ns.getBundledModel;
+  return fn ? fn(provider, id) : undefined;
 }
 
 type RuntimeModelEntry = { provider?: unknown; id?: unknown };
 
 interface RuntimeModelRegistry {
-	find?: (provider: string, id: string) => unknown;
-	getAvailable?: () => readonly RuntimeModelEntry[];
-	getAll?: () => readonly RuntimeModelEntry[];
+  find?: (provider: string, id: string) => unknown;
+  getAvailable?: () => readonly RuntimeModelEntry[];
+  getAll?: () => readonly RuntimeModelEntry[];
 }
 
 /**
@@ -69,59 +69,59 @@ interface RuntimeModelRegistry {
  * are selectable via ctx.modelRegistry but absent from bundled pi-ai.
  */
 function lookupVerifierModel(ctx: ExtensionContext, provider: string, id: string): unknown {
-	const registry = ctx.modelRegistry as RuntimeModelRegistry | undefined;
+  const registry = ctx.modelRegistry as RuntimeModelRegistry | undefined;
 
-	const directMatch = lookupRegistryFind(registry, provider, id);
-	if (directMatch) return directMatch;
+  const directMatch = lookupRegistryFind(registry, provider, id);
+  if (directMatch) return directMatch;
 
-	const availableMatch = lookupRegistryList(registry, "getAvailable", provider, id);
-	if (availableMatch) return availableMatch;
+  const availableMatch = lookupRegistryList(registry, "getAvailable", provider, id);
+  if (availableMatch) return availableMatch;
 
-	const allMatch = lookupRegistryList(registry, "getAll", provider, id);
-	if (allMatch) return allMatch;
+  const allMatch = lookupRegistryList(registry, "getAll", provider, id);
+  if (allMatch) return allMatch;
 
-	return lookupModel(provider, id);
+  return lookupModel(provider, id);
 }
 
 function lookupRegistryFind(
-	registry: RuntimeModelRegistry | undefined,
-	provider: string,
-	id: string,
+  registry: RuntimeModelRegistry | undefined,
+  provider: string,
+  id: string,
 ): unknown {
-	if (!registry || typeof registry.find !== "function") return undefined;
-	try {
-		return registry.find.call(registry, provider, id);
-	} catch {
-		return undefined;
-	}
+  if (!registry || typeof registry.find !== "function") return undefined;
+  try {
+    return registry.find.call(registry, provider, id);
+  } catch {
+    return undefined;
+  }
 }
 
 function lookupRegistryList(
-	registry: RuntimeModelRegistry | undefined,
-	method: "getAvailable" | "getAll",
-	provider: string,
-	id: string,
+  registry: RuntimeModelRegistry | undefined,
+  method: "getAvailable" | "getAll",
+  provider: string,
+  id: string,
 ): unknown {
-	if (!registry) return undefined;
-	const getModels = registry[method];
-	if (typeof getModels !== "function") return undefined;
+  if (!registry) return undefined;
+  const getModels = registry[method];
+  if (typeof getModels !== "function") return undefined;
 
-	try {
-		return findRegistryModel(getModels.call(registry), provider, id);
-	} catch {
-		return undefined;
-	}
+  try {
+    return findRegistryModel(getModels.call(registry), provider, id);
+  } catch {
+    return undefined;
+  }
 }
 
 function findRegistryModel(
-	models: readonly RuntimeModelEntry[],
-	provider: string,
-	id: string,
+  models: readonly RuntimeModelEntry[],
+  provider: string,
+  id: string,
 ): unknown {
-	for (const model of models) {
-		if (model.provider === provider && model.id === id) return model;
-	}
-	return undefined;
+  for (const model of models) {
+    if (model.provider === provider && model.id === id) return model;
+  }
+  return undefined;
 }
 
 /**
@@ -132,29 +132,29 @@ function findRegistryModel(
  * `{ apiKey, headers? }` or null when no auth is available.
  */
 async function getAuthForModel(
-	modelRegistry: unknown,
-	model: unknown,
+  modelRegistry: unknown,
+  model: unknown,
 ): Promise<{ apiKey: string; headers?: Record<string, string> } | null> {
-	const reg = modelRegistry as {
-		getApiKeyAndHeaders?: (m: unknown) => Promise<
-			{ ok: boolean; apiKey?: string; headers?: Record<string, string> } | undefined
-		>;
-		getApiKey?: (m: unknown) => Promise<string | undefined>;
-	};
+  const reg = modelRegistry as {
+    getApiKeyAndHeaders?: (m: unknown) => Promise<
+      { ok: boolean; apiKey?: string; headers?: Record<string, string> } | undefined
+    >;
+    getApiKey?: (m: unknown) => Promise<string | undefined>;
+  };
 
-	if (typeof reg.getApiKeyAndHeaders === "function") {
-		const result = await reg.getApiKeyAndHeaders(model);
-		if (!result?.ok || !result.apiKey) return null;
-		return { apiKey: result.apiKey, headers: result.headers };
-	}
+  if (typeof reg.getApiKeyAndHeaders === "function") {
+    const result = await reg.getApiKeyAndHeaders(model);
+    if (!result?.ok || !result.apiKey) return null;
+    return { apiKey: result.apiKey, headers: result.headers };
+  }
 
-	if (typeof reg.getApiKey === "function") {
-		const apiKey = await reg.getApiKey(model);
-		if (!apiKey) return null;
-		return { apiKey };
-	}
+  if (typeof reg.getApiKey === "function") {
+    const apiKey = await reg.getApiKey(model);
+    if (!apiKey) return null;
+    return { apiKey };
+  }
 
-	return null;
+  return null;
 }
 
 const SYSTEM_PROMPT = `You are a fact-check verifier. Judge whether the assistant's response is grounded, using two context blocks describing what the assistant actually inspected:
@@ -188,177 +188,177 @@ const USER_TEMPLATE = `<ASSISTANT_RESPONSE>
 <EVIDENCE_SLOT>`;
 
 const VerdictSchema = Type.Object({
-	ok: Type.Boolean(),
-	reason: Type.Optional(Type.String()),
+  ok: Type.Boolean(),
+  reason: Type.Optional(Type.String()),
 });
 type Verdict = Static<typeof VerdictSchema>;
 
 /** Internal options — used by tests to shorten the timeout / inject paths. */
 export interface RunSpeculationCheckOptions {
-	timeoutMs?: number;
-	/**
-	 * Recently-inspected file paths surfaced to the verifier as
-	 * <RECENT_INSPECTIONS>. In production this is the union of
-	 * ReadTracker.recentPaths() and InspectionTracker.recentPaths(),
-	 * deduplicated at the agent_end hook. When omitted, the block renders
-	 * its empty sentinel and the check falls back to <TOOL_CALLS>-only
-	 * grounding. Pre-unioned (rather than two tracker handles) so this
-	 * module stays decoupled from the tracker classes.
-	 */
-	recentPaths?: readonly string[];
-	/**
-	 * Recent tool-call descriptors surfaced to the verifier as <TOOL_CALLS>.
-	 * In production this is ToolCallTracker.recentCalls() passed from the
-	 * agent_end hook. When omitted, the block renders its empty sentinel.
-	 */
-	recentCalls?: readonly string[];
+  timeoutMs?: number;
+  /**
+   * Recently-inspected file paths surfaced to the verifier as
+   * <RECENT_INSPECTIONS>. In production this is the union of
+   * ReadTracker.recentPaths() and InspectionTracker.recentPaths(),
+   * deduplicated at the agent_end hook. When omitted, the block renders
+   * its empty sentinel and the check falls back to <TOOL_CALLS>-only
+   * grounding. Pre-unioned (rather than two tracker handles) so this
+   * module stays decoupled from the tracker classes.
+   */
+  recentPaths?: readonly string[];
+  /**
+   * Recent tool-call descriptors surfaced to the verifier as <TOOL_CALLS>.
+   * In production this is ToolCallTracker.recentCalls() passed from the
+   * agent_end hook. When omitted, the block renders its empty sentinel.
+   */
+  recentCalls?: readonly string[];
 }
 
 export async function runSpeculationCheck(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	event: AgentEndEvent,
-	state: SessionState,
-	options: RunSpeculationCheckOptions = {},
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  event: AgentEndEvent,
+  state: SessionState,
+  options: RunSpeculationCheckOptions = {},
 ): Promise<void> {
-	try {
-		await runSpeculationCheckInner(pi, ctx, event, state, options);
-	} catch (err) {
-		// Unexpected throw — anything that escaped the narrowly-scoped
-		// inner try around `complete()` is a real bug (typo, undefined
-		// access, broken import after refactor, etc.). Surface it every
-		// time: if the speculation check is silently broken, the user
-		// needs persistent feedback so they can switch verifier or
-		// disable the plugin. Better to be loud than to die quietly.
-		const message = err instanceof Error ? err.message : String(err);
-		ctx.ui.notify(
-			`pi-behavior-control: speculation check crashed (${message}). Please report this.`,
-			"error",
-		);
-	}
+  try {
+    await runSpeculationCheckInner(pi, ctx, event, state, options);
+  } catch (err) {
+    // Unexpected throw — anything that escaped the narrowly-scoped
+    // inner try around `complete()` is a real bug (typo, undefined
+    // access, broken import after refactor, etc.). Surface it every
+    // time: if the speculation check is silently broken, the user
+    // needs persistent feedback so they can switch verifier or
+    // disable the plugin. Better to be loud than to die quietly.
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(
+      `pi-behavior-control: speculation check crashed (${message}). Please report this.`,
+      "error",
+    );
+  }
 }
 
 async function runSpeculationCheckInner(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	event: AgentEndEvent,
-	state: SessionState,
-	options: RunSpeculationCheckOptions,
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  event: AgentEndEvent,
+  state: SessionState,
+  options: RunSpeculationCheckOptions,
 ): Promise<void> {
-	if (!state.enabled) return;
-	// One-shot modes (print, json) have no UI for the follow-up and the agent
-	// has already returned to the caller. RPC and TUI both keep the session
-	// alive between turns and have hasUI === true.
-	if (!ctx.hasUI) return;
+  if (!state.enabled) return;
+  // One-shot modes (print, json) have no UI for the follow-up and the agent
+  // has already returned to the caller. RPC and TUI both keep the session
+  // alive between turns and have hasUI === true.
+  if (!ctx.hasUI) return;
 
-	const assistantText = extractLastAssistantText(event.messages);
-	if (assistantText.length === 0) return;
+  const assistantText = extractLastAssistantText(event.messages);
+  if (assistantText.length === 0) return;
 
-	const choice = resolveVerifier();
-	const verifier = materializeChoice(choice, ctx);
-	if (!verifier) {
-		if (choice === "session-model") {
-			// Fatal for this session: user picked "use session model" but no
-			// model is currently active. Fire every time so they can switch.
-			ctx.ui.notify(
-				`pi-behavior-control: "use current session model" picked but no model is currently active; speculation check cannot run`,
-				"error",
-			);
-		}
-		return;
-	}
-	const model = lookupVerifierModel(ctx, verifier.provider, verifier.id) as
-		| Parameters<typeof complete>[0]
-		| undefined;
-	if (!model) {
-		// Speculation check can never run until the verifier is wired up.
-		// Fire every time so the user knows to switch model or disable.
-		ctx.ui.notify(
-			`pi-behavior-control: verifier model "${verifier.provider}/${verifier.id}" not registered`,
-			"error",
-		);
-		return;
-	}
+  const choice = resolveVerifier();
+  const verifier = materializeChoice(choice, ctx);
+  if (!verifier) {
+    if (choice === "session-model") {
+      // Fatal for this session: user picked "use session model" but no
+      // model is currently active. Fire every time so they can switch.
+      ctx.ui.notify(
+        `pi-behavior-control: "use current session model" picked but no model is currently active; speculation check cannot run`,
+        "error",
+      );
+    }
+    return;
+  }
+  const model = lookupVerifierModel(ctx, verifier.provider, verifier.id) as
+    | Parameters<typeof complete>[0]
+    | undefined;
+  if (!model) {
+    // Speculation check can never run until the verifier is wired up.
+    // Fire every time so the user knows to switch model or disable.
+    ctx.ui.notify(
+      `pi-behavior-control: verifier model "${verifier.provider}/${verifier.id}" not registered`,
+      "error",
+    );
+    return;
+  }
 
-	const auth = await getAuthForModel(ctx.modelRegistry, model);
-	if (!auth) {
-		// Speculation check can never run until auth is configured. Fire
-		// every time so the user knows to add the key or switch verifier.
-		ctx.ui.notify(
-			`pi-behavior-control: no API key configured for ${verifier.provider}`,
-			"error",
-		);
-		return;
-	}
+  const auth = await getAuthForModel(ctx.modelRegistry, model);
+  if (!auth) {
+    // Speculation check can never run until auth is configured. Fire
+    // every time so the user knows to add the key or switch verifier.
+    ctx.ui.notify(
+      `pi-behavior-control: no API key configured for ${verifier.provider}`,
+      "error",
+    );
+    return;
+  }
 
-	const toolCalls = buildEvidenceBlock(options.recentCalls ?? []);
-	const recentInspections = buildRecentInspectionsBlock(
-		options.recentPaths ?? [],
-		ctx.cwd,
-	);
-	const userText = buildUserPrompt(assistantText, toolCalls, recentInspections);
-	const signal = buildSignal(ctx.signal, options.timeoutMs ?? TIMEOUT_MS);
+  const toolCalls = buildEvidenceBlock(options.recentCalls ?? []);
+  const recentInspections = buildRecentInspectionsBlock(
+    options.recentPaths ?? [],
+    ctx.cwd,
+  );
+  const userText = buildUserPrompt(assistantText, toolCalls, recentInspections);
+  const signal = buildSignal(ctx.signal, options.timeoutMs ?? TIMEOUT_MS);
 
-	// Wrap ONLY the model call in a try/catch. The only silent path is
-	// `ctx.signal` aborting mid-check — that means a new turn started or
-	// the user cancelled, which is a normal lifecycle event, not a
-	// verifier problem. Every other failure (our 15s timeout, network
-	// error, API error, auth rejection) surfaces as an error notify so
-	// the user can switch verifier or disable the plugin.
-	let response: { content: { type: string; text?: string }[] };
-	try {
-		response = await complete(
-			model,
-			{
-				systemPrompt: SYSTEM_PROMPT,
-				messages: [
-					{
-						role: "user",
-						content: [{ type: "text", text: userText }],
-						timestamp: Date.now(),
-					},
-				],
-			},
-			{ apiKey: auth.apiKey, headers: auth.headers, signal },
-		);
-	} catch (err) {
-		if (ctx.signal?.aborted) return;
-		const message = err instanceof Error ? err.message : String(err);
-		ctx.ui.notify(
-			`pi-behavior-control: speculation check failed (${message})`,
-			"error",
-		);
-		return;
-	}
+  // Wrap ONLY the model call in a try/catch. The only silent path is
+  // `ctx.signal` aborting mid-check — that means a new turn started or
+  // the user cancelled, which is a normal lifecycle event, not a
+  // verifier problem. Every other failure (our 15s timeout, network
+  // error, API error, auth rejection) surfaces as an error notify so
+  // the user can switch verifier or disable the plugin.
+  let response: { content: { type: string; text?: string }[] };
+  try {
+    response = await complete(
+      model,
+      {
+        systemPrompt: SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: userText }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      { apiKey: auth.apiKey, headers: auth.headers, signal },
+    );
+  } catch (err) {
+    if (ctx.signal?.aborted) return;
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.ui.notify(
+      `pi-behavior-control: speculation check failed (${message})`,
+      "error",
+    );
+    return;
+  }
 
-	const responseText = response.content
-		.filter((c): c is { type: "text"; text: string } =>
-			c.type === "text" && typeof (c as { text?: unknown }).text === "string",
-		)
-		.map((c) => c.text)
-		.join("\n")
-		.trim();
+  const responseText = response.content
+    .filter((c): c is { type: "text"; text: string } =>
+      c.type === "text" && typeof (c as { text?: unknown }).text === "string",
+    )
+    .map((c) => c.text)
+    .join("\n")
+    .trim();
 
-	const verdict = parseVerdict(responseText);
-	if (!verdict) {
-		ctx.ui.notify(
-			`pi-behavior-control: verifier returned unparseable response; pick a model that supports strict JSON output`,
-			"error",
-		);
-		return;
-	}
-	if (verdict.ok) return;
+  const verdict = parseVerdict(responseText);
+  if (!verdict) {
+    ctx.ui.notify(
+      `pi-behavior-control: verifier returned unparseable response; pick a model that supports strict JSON output`,
+      "error",
+    );
+    return;
+  }
+  if (verdict.ok) return;
 
-	pi.sendMessage(
-		{
-			customType: "behavior-control/speculation-flag",
-			display: true,
-			content:
-				verdict.reason ??
-				"Response flagged as speculative; review and amend.",
-		},
-		{ deliverAs: "followUp", triggerTurn: true },
-	);
+  pi.sendMessage(
+    {
+      customType: "behavior-control/speculation-flag",
+      display: true,
+      content:
+        verdict.reason ??
+        "Response flagged as speculative; review and amend.",
+    },
+    { deliverAs: "followUp", triggerTurn: true },
+  );
 }
 
 /**
@@ -367,27 +367,27 @@ async function runSpeculationCheckInner(
  * text content (e.g. tool-only responses).
  */
 export function extractLastAssistantText(
-	messages: readonly AgentEndEvent["messages"][number][],
+  messages: readonly AgentEndEvent["messages"][number][],
 ): string {
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const m = messages[i];
-		if (!m || m.role !== "assistant") continue;
-		const content = (m as { content?: unknown }).content;
-		if (!Array.isArray(content)) continue;
-		const texts: string[] = [];
-		for (const c of content) {
-			if (
-				c &&
-				typeof c === "object" &&
-				(c as { type?: unknown }).type === "text" &&
-				typeof (c as { text?: unknown }).text === "string"
-			) {
-				texts.push((c as { text: string }).text);
-			}
-		}
-		if (texts.length > 0) return texts.join("\n");
-	}
-	return "";
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || m.role !== "assistant") continue;
+    const content = (m as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    const texts: string[] = [];
+    for (const c of content) {
+      if (
+        c &&
+        typeof c === "object" &&
+        (c as { type?: unknown }).type === "text" &&
+        typeof (c as { text?: unknown }).text === "string"
+      ) {
+        texts.push((c as { text: string }).text);
+      }
+    }
+    if (texts.length > 0) return texts.join("\n");
+  }
+  return "";
 }
 
 /**
@@ -399,15 +399,15 @@ export function extractLastAssistantText(
  * window from a clipped one. Exported for tests.
  */
 export function buildEvidenceBlock(calls: readonly string[]): string {
-	if (calls.length === 0) return "(no recent tool calls)";
+  if (calls.length === 0) return "(no recent tool calls)";
 
-	const capped =
-		calls.length > MAX_RECENT_CALLS
-			? calls.slice(calls.length - MAX_RECENT_CALLS)
-			: calls;
-	const lines = capped.map((call, i) => `[${i + 1}] ${call}`);
+  const capped =
+    calls.length > MAX_RECENT_CALLS
+      ? calls.slice(calls.length - MAX_RECENT_CALLS)
+      : calls;
+  const lines = capped.map((call, i) => `[${i + 1}] ${call}`);
 
-	return ["<TOOL_CALLS>", ...lines, "</TOOL_CALLS>"].join("\n");
+  return ["<TOOL_CALLS>", ...lines, "</TOOL_CALLS>"].join("\n");
 }
 
 /**
@@ -421,28 +421,28 @@ export function buildEvidenceBlock(calls: readonly string[]): string {
  * Exported for tests.
  */
 export function buildRecentInspectionsBlock(
-	paths: readonly string[],
-	cwd: string,
+  paths: readonly string[],
+  cwd: string,
 ): string {
-	if (paths.length === 0) return "(no recent inspections)";
+  if (paths.length === 0) return "(no recent inspections)";
 
-	// Keep the most recent entries when over the cap. The trackers yield
-	// paths in insertion order, so the tail is the most recently inspected.
-	const capped =
-		paths.length > MAX_RECENT_INSPECTIONS
-			? paths.slice(paths.length - MAX_RECENT_INSPECTIONS)
-			: paths;
+  // Keep the most recent entries when over the cap. The trackers yield
+  // paths in insertion order, so the tail is the most recently inspected.
+  const capped =
+    paths.length > MAX_RECENT_INSPECTIONS
+      ? paths.slice(paths.length - MAX_RECENT_INSPECTIONS)
+      : paths;
 
-	const lines = capped.map((p) => {
-		const rel = path.relative(cwd, p);
-		// Inside cwd: use the relative form. `path.relative` returns a
-		// `..`-prefixed path for siblings/ancestors — keep those absolute
-		// so the verifier sees an unambiguous location.
-		const display = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : p;
-		return `- ${display}`;
-	});
+  const lines = capped.map((p) => {
+    const rel = path.relative(cwd, p);
+    // Inside cwd: use the relative form. `path.relative` returns a
+    // `..`-prefixed path for siblings/ancestors — keep those absolute
+    // so the verifier sees an unambiguous location.
+    const display = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : p;
+    return `- ${display}`;
+  });
 
-	return ["<RECENT_INSPECTIONS>", ...lines, "</RECENT_INSPECTIONS>"].join("\n");
+  return ["<RECENT_INSPECTIONS>", ...lines, "</RECENT_INSPECTIONS>"].join("\n");
 }
 
 /**
@@ -453,16 +453,16 @@ export function buildRecentInspectionsBlock(
  * pattern.
  */
 function buildUserPrompt(
-	assistantText: string,
-	toolCalls: string,
-	recentInspections: string,
+  assistantText: string,
+  toolCalls: string,
+  recentInspections: string,
 ): string {
-	const evidence = `${toolCalls}
+  const evidence = `${toolCalls}
 
 ${recentInspections}`;
-	return USER_TEMPLATE
-		.replace("<ASSISTANT_TEXT_SLOT>", () => assistantText)
-		.replace("<EVIDENCE_SLOT>", () => evidence);
+  return USER_TEMPLATE
+    .replace("<ASSISTANT_TEXT_SLOT>", () => assistantText)
+    .replace("<EVIDENCE_SLOT>", () => evidence);
 }
 
 /**
@@ -470,15 +470,15 @@ ${recentInspections}`;
  * choices, reads `ctx.model` at call time; returns null when unavailable.
  */
 function materializeChoice(
-	choice: VerifierChoice,
-	ctx: ExtensionContext,
+  choice: VerifierChoice,
+  ctx: ExtensionContext,
 ): VerifierModel | null {
-	if (choice !== "session-model") return choice;
-	// Let TypeScript infer the model type from ctx.model — upstream types
-	// it loosely, but we only read .provider and .id which are stable.
-	const m = ctx.model;
-	if (!m) return null;
-	return { provider: m.provider, id: m.id };
+  if (choice !== "session-model") return choice;
+  // Let TypeScript infer the model type from ctx.model — upstream types
+  // it loosely, but we only read .provider and .id which are stable.
+  const m = ctx.model;
+  if (!m) return null;
+  return { provider: m.provider, id: m.id };
 }
 
 /**
@@ -487,9 +487,9 @@ function materializeChoice(
  * on whichever fires first.
  */
 function buildSignal(ctxSignal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-	const timeout = AbortSignal.timeout(timeoutMs);
-	if (!ctxSignal) return timeout;
-	return AbortSignal.any([ctxSignal, timeout]);
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!ctxSignal) return timeout;
+  return AbortSignal.any([ctxSignal, timeout]);
 }
 
 /**
@@ -499,24 +499,24 @@ function buildSignal(ctxSignal: AbortSignal | undefined, timeoutMs: number): Abo
  * null when nothing parses cleanly — caller surfaces an error notify.
  */
 export function parseVerdict(text: string): Verdict | null {
-	const direct = tryParseVerdict(text);
-	if (direct) return direct;
+  const direct = tryParseVerdict(text);
+  if (direct) return direct;
 
-	const start = text.indexOf("{");
-	const end = text.lastIndexOf("}");
-	if (start >= 0 && end > start) {
-		return tryParseVerdict(text.slice(start, end + 1));
-	}
-	return null;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return tryParseVerdict(text.slice(start, end + 1));
+  }
+  return null;
 }
 
 function tryParseVerdict(text: string): Verdict | null {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch {
-		return null;
-	}
-	if (!Check(VerdictSchema, parsed)) return null;
-	return parsed;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Check(VerdictSchema, parsed)) return null;
+  return parsed;
 }

@@ -18,10 +18,10 @@ import { agentDir } from "../session/user-config.ts";
 export type ReminderSource = "cwd" | "master";
 
 export interface ResolvedReminder {
-	text: string;
-	source: ReminderSource;
-	/** Absolute path the text was loaded from. */
-	path: string;
+  text: string;
+  source: ReminderSource;
+  /** Absolute path the text was loaded from. */
+  path: string;
 }
 
 const REMINDER_FILENAME = "response-rules-reminder.md";
@@ -32,25 +32,25 @@ const REMINDER_FILENAME = "response-rules-reminder.md";
  * dialog in `index.ts` — share one source of truth with the loader.
  */
 export function reminderCandidatePaths(cwd: string): {
-	cwdPath: string;
-	masterPath: string;
+  cwdPath: string;
+  masterPath: string;
 } {
-	return {
-		cwdPath: path.join(cwd, REMINDER_FILENAME),
-		masterPath: path.join(agentDir(), REMINDER_FILENAME),
-	};
+  return {
+    cwdPath: path.join(cwd, REMINDER_FILENAME),
+    masterPath: path.join(agentDir(), REMINDER_FILENAME),
+  };
 }
 
 export function loadResponseReminder(cwd: string): ResolvedReminder | null {
-	const { cwdPath, masterPath } = reminderCandidatePaths(cwd);
+  const { cwdPath, masterPath } = reminderCandidatePaths(cwd);
 
-	const cwdResult = loadCachedFile(cwdPath, { nullIfEmpty: true });
-	if (cwdResult) return { ...cwdResult, source: "cwd" };
+  const cwdResult = loadCachedFile(cwdPath, { nullIfEmpty: true });
+  if (cwdResult) return { ...cwdResult, source: "cwd" };
 
-	const masterResult = loadCachedFile(masterPath, { nullIfEmpty: true });
-	if (masterResult) return { ...masterResult, source: "master" };
+  const masterResult = loadCachedFile(masterPath, { nullIfEmpty: true });
+  if (masterResult) return { ...masterResult, source: "master" };
 
-	return null;
+  return null;
 }
 
 /**
@@ -64,15 +64,15 @@ export function loadResponseReminder(cwd: string): ResolvedReminder | null {
  * that they have acknowledged the feature.
  */
 export function responseReminderFileExists(cwd: string): boolean {
-	const { cwdPath, masterPath } = reminderCandidatePaths(cwd);
-	for (const candidate of [cwdPath, masterPath]) {
-		try {
-			if (fs.statSync(candidate).isFile()) return true;
-		} catch {
-			// not present at this path; fall through and try the next.
-		}
-	}
-	return false;
+  const { cwdPath, masterPath } = reminderCandidatePaths(cwd);
+  for (const candidate of [cwdPath, masterPath]) {
+    try {
+      if (fs.statSync(candidate).isFile()) return true;
+    } catch {
+      // not present at this path; fall through and try the next.
+    }
+  }
+  return false;
 }
 
 /**
@@ -80,5 +80,5 @@ export function responseReminderFileExists(cwd: string): boolean {
  * tests) so existing imports `from "./reminder-source.ts"` keep working.
  */
 export function __clearCacheForTests(): void {
-	__clearCachedFileCache();
+  __clearCachedFileCache();
 }

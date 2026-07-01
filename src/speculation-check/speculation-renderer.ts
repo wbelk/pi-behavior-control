@@ -45,14 +45,14 @@ export const INDENT = "  ";
  * in tests and so the module never hard-depends on the theme surface.
  */
 export interface RendererTheme {
-	fg(color: string, text: string): string;
-	bold(text: string): string;
+  fg(color: string, text: string): string;
+  bold(text: string): string;
 }
 
 /** Identity theme: no ANSI coloring. Used by tests and as a defensive fallback. */
 const PLAIN_THEME: RendererTheme = {
-	fg: (_color, text) => text,
-	bold: (text) => text,
+  fg: (_color, text) => text,
+  bold: (text) => text,
 };
 
 /**
@@ -62,30 +62,30 @@ const PLAIN_THEME: RendererTheme = {
  * newlines in `text` are treated as hard breaks.
  */
 function wrap(text: string, width: number): string[] {
-	const limit = Math.max(width, MIN_WRAP_WIDTH);
-	const lines: string[] = [];
+  const limit = Math.max(width, MIN_WRAP_WIDTH);
+  const lines: string[] = [];
 
-	for (const paragraph of text.split("\n")) {
-		const words = paragraph.split(/\s+/).filter((w) => w.length > 0);
-		if (words.length === 0) {
-			lines.push("");
-			continue;
-		}
-		let current = "";
-		for (const word of words) {
-			if (current.length === 0) {
-				current = word;
-			} else if (current.length + 1 + word.length <= limit) {
-				current = `${current} ${word}`;
-			} else {
-				lines.push(current);
-				current = word;
-			}
-		}
-		if (current.length > 0) lines.push(current);
-	}
+  for (const paragraph of text.split("\n")) {
+    const words = paragraph.split(/\s+/).filter((w) => w.length > 0);
+    if (words.length === 0) {
+      lines.push("");
+      continue;
+    }
+    let current = "";
+    for (const word of words) {
+      if (current.length === 0) {
+        current = word;
+      } else if (current.length + 1 + word.length <= limit) {
+        current = `${current} ${word}`;
+      } else {
+        lines.push(current);
+        current = word;
+      }
+    }
+    if (current.length > 0) lines.push(current);
+  }
 
-	return lines;
+  return lines;
 }
 
 /**
@@ -98,38 +98,38 @@ function wrap(text: string, width: number): string[] {
  * with a trailing marker if truncated.
  */
 export function formatSpeculationLines(
-	reason: string,
-	width: number,
-	expanded: boolean,
+  reason: string,
+  width: number,
+  expanded: boolean,
 ): string[] {
-	const trimmed = reason.trim();
+  const trimmed = reason.trim();
 
-	// The attribution tag stands alone on the first line; the reason wraps
-	// beneath it with a small hanging indent. Keeping the tag on its own line
-	// means the reason always wraps against a single, consistent budget and the
-	// first line can never overflow the way a "tag + first chunk" line would.
-	if (trimmed.length === 0) {
-		return [PREFIX, `${INDENT}(no reason given)`];
-	}
+  // The attribution tag stands alone on the first line; the reason wraps
+  // beneath it with a small hanging indent. Keeping the tag on its own line
+  // means the reason always wraps against a single, consistent budget and the
+  // first line can never overflow the way a "tag + first chunk" line would.
+  if (trimmed.length === 0) {
+    return [PREFIX, `${INDENT}(no reason given)`];
+  }
 
-	const bodyWidth = Math.max(width - INDENT.length, MIN_WRAP_WIDTH);
-	let body = wrap(trimmed, bodyWidth);
+  const bodyWidth = Math.max(width - INDENT.length, MIN_WRAP_WIDTH);
+  let body = wrap(trimmed, bodyWidth);
 
-	let truncated = false;
-	if (!expanded && body.length > COLLAPSED_MAX_BODY_LINES) {
-		body = body.slice(0, COLLAPSED_MAX_BODY_LINES);
-		truncated = true;
-	}
+  let truncated = false;
+  if (!expanded && body.length > COLLAPSED_MAX_BODY_LINES) {
+    body = body.slice(0, COLLAPSED_MAX_BODY_LINES);
+    truncated = true;
+  }
 
-	const lines: string[] = [PREFIX];
-	for (const line of body) {
-		lines.push(`${INDENT}${line}`);
-	}
-	if (truncated) {
-		lines.push(`${INDENT}\u2026 (expand tool output to see the full reason)`);
-	}
+  const lines: string[] = [PREFIX];
+  for (const line of body) {
+    lines.push(`${INDENT}${line}`);
+  }
+  if (truncated) {
+    lines.push(`${INDENT}\u2026 (expand tool output to see the full reason)`);
+  }
 
-	return lines;
+  return lines;
 }
 
 /**
@@ -139,20 +139,20 @@ export function formatSpeculationLines(
  * render nothing.
  */
 function reasonFromContent(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (Array.isArray(content)) {
-		return content
-			.filter(
-				(c): c is { type: "text"; text: string } =>
-					!!c &&
-					typeof c === "object" &&
-					(c as { type?: unknown }).type === "text" &&
-					typeof (c as { text?: unknown }).text === "string",
-			)
-			.map((c) => c.text)
-			.join("\n");
-	}
-	return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(
+        (c): c is { type: "text"; text: string } =>
+          !!c &&
+          typeof c === "object" &&
+          (c as { type?: unknown }).type === "text" &&
+          typeof (c as { text?: unknown }).text === "string",
+      )
+      .map((c) => c.text)
+      .join("\n");
+  }
+  return "";
 }
 
 /**
@@ -161,17 +161,17 @@ function reasonFromContent(content: unknown): string {
  * reads as a secondary annotation, not a primary message.
  */
 export function renderColoredLines(
-	reason: string,
-	width: number,
-	expanded: boolean,
-	theme: RendererTheme,
+  reason: string,
+  width: number,
+  expanded: boolean,
+  theme: RendererTheme,
 ): string[] {
-	const plain = formatSpeculationLines(reason, width, expanded);
-	return plain.map((line, i) =>
-		i === 0
-			? theme.fg("warning", theme.bold(line))
-			: theme.fg("customMessageText", line),
-	);
+  const plain = formatSpeculationLines(reason, width, expanded);
+  return plain.map((line, i) =>
+    i === 0
+      ? theme.fg("warning", theme.bold(line))
+      : theme.fg("customMessageText", line),
+  );
 }
 
 /**
@@ -186,38 +186,38 @@ export function renderColoredLines(
  * under upstream pi and OMP.
  */
 export function registerSpeculationRenderer(pi: ExtensionAPI): void {
-	type Register = ExtensionAPI["registerMessageRenderer"];
-	type Renderer = Parameters<Register>[1];
-	type Message = Parameters<Renderer>[0];
-	type Options = Parameters<Renderer>[1];
-	type ThemeArg = Parameters<Renderer>[2];
-	type RenderedComponent = ReturnType<Renderer>;
+  type Register = ExtensionAPI["registerMessageRenderer"];
+  type Renderer = Parameters<Register>[1];
+  type Message = Parameters<Renderer>[0];
+  type Options = Parameters<Renderer>[1];
+  type ThemeArg = Parameters<Renderer>[2];
+  type RenderedComponent = ReturnType<Renderer>;
 
-	const renderer = (
-		message: Message,
-		options: Options,
-		theme: ThemeArg,
-	): RenderedComponent => {
-		const reason = reasonFromContent(
-			(message as { content?: unknown }).content,
-		);
-		const themeImpl: RendererTheme =
-			theme && typeof (theme as RendererTheme).fg === "function"
-				? (theme as unknown as RendererTheme)
-				: PLAIN_THEME;
+  const renderer = (
+    message: Message,
+    options: Options,
+    theme: ThemeArg,
+  ): RenderedComponent => {
+    const reason = reasonFromContent(
+      (message as { content?: unknown }).content,
+    );
+    const themeImpl: RendererTheme =
+      theme && typeof (theme as RendererTheme).fg === "function"
+        ? (theme as unknown as RendererTheme)
+        : PLAIN_THEME;
 
-		const component = {
-			render(width: number): string[] {
-				return renderColoredLines(
-					reason,
-					width,
-					options.expanded,
-					themeImpl,
-				);
-			},
-		};
-		return component as unknown as RenderedComponent;
-	};
+    const component = {
+      render(width: number): string[] {
+        return renderColoredLines(
+          reason,
+          width,
+          options.expanded,
+          themeImpl,
+        );
+      },
+    };
+    return component as unknown as RenderedComponent;
+  };
 
-	pi.registerMessageRenderer(SPECULATION_FLAG_TYPE, renderer as Renderer);
+  pi.registerMessageRenderer(SPECULATION_FLAG_TYPE, renderer as Renderer);
 }

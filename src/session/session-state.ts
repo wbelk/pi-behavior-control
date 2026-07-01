@@ -3,14 +3,14 @@
 // Spec: section 8a (enabled), hook 5 (reset).
 
 export interface SessionState {
-	/** Set by the session enablement gate. All active hooks no-op when false. */
-	enabled: boolean;
+  /** Set by the session enablement gate. All active hooks no-op when false. */
+  enabled: boolean;
 }
 
 export function createSessionState(): SessionState {
-	return {
-		enabled: false,
-	};
+  return {
+    enabled: false,
+  };
 }
 
 /**
@@ -18,5 +18,5 @@ export function createSessionState(): SessionState {
  * `session_start` (every reason — startup, new, resume, fork, reload).
  */
 export function resetSessionState(state: SessionState): void {
-	state.enabled = false;
+  state.enabled = false;
 }
