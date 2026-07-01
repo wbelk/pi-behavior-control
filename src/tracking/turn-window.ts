@@ -26,7 +26,7 @@ export interface TurnEntry {
  * Map of string key -> entry, aged out by a sliding turn window. Entries are
  * stamped with `currentTurn` at record time (by subclasses, via the protected
  * `log`/`currentTurn` members) and evicted by `prune()` once they fall outside
- * `windowTurns`. `clear()` drops everything on session shutdown.
+ * `windowTurns`. `clear()` drops everything on session entry and shutdown.
  *
  * Subclasses own how keys and entries are produced (canonical paths + stat
  * metadata for ReadTracker, surfaced paths for InspectionTracker, deduped
@@ -61,7 +61,7 @@ export abstract class TurnWindowedKeyLog<E extends TurnEntry> {
     }
   }
 
-  /** Drop everything. Wired to `session_shutdown` so no state leaks across sessions. */
+  /** Drop everything. Called on session entry and on shutdown so reads never leak across sessions. */
   clear(): void {
     this.log.clear();
   }

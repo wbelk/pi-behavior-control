@@ -1,12 +1,19 @@
 # pi-behavior-control
 
-`pi-behavior-control` is a plugin for pi and oh-my-pi that keeps the agent honest:
+`pi-behavior-control` is a plugin for `pi`/`oh-my-pi` that enforces agent behavior at every turn — to create a reliable "daily driver" setup for working on existing codebases — improving quality and predictability.
 
-1. Agent must read a file before editing or writing it — and the read only counts if it happened within the last few turns (a sliding window), not just the current turn.
-2. If a file changed on disk between the read and the edit, the agent is forced to re-read.
-3. Every successful edit is followed by a "review the change you just made" instruction the agent has to address.
-4. After every agent response, a verifier model scans the message for unverified claims (no file:line citations, hedge words, etc.); flagged responses get a follow-up prompt asking the agent to fix the speculation.
-5. If a `response-rules-reminder.md` exists, its contents are appended to the system prompt before every agent turn, so your standing response rules ride along on every turn.
+Agents are far too verbose by default. Context expansion destroys quality and memory recall. We cannot rely on a front-loaded AGENTS/CLAUDE.md. We must keep the agent on track with micro-context added at each turn.
+
+### 1) Response reminder before every turn
+  - `response-rules-reminder.md` is appended to the system prompt. (*see `example/response-rules-reminder.md`)
+### 2) After response, audit for speculation
+  - a verifier model scans each response message for unverified claims (no file:line citations, hedge words, etc.)
+  - flagged responses get a follow-up prompt asking the agent to fix the speculation
+### 3) Agent must read files before edit/write
+  - read log with sliding window of last few turns
+### 4) After file edit/write, review prompt
+  - agent is prompted to review changes according to coding rules
+### 5) slash command for adversarial subagent review
 
 ## Install
 
@@ -28,51 +35,51 @@ pi install /absolute/path/to/pi-behavior-control
 omp plugin link /absolute/path/to/pi-behavior-control
 ```
 
+After install, add:
+
+1) `response-rules-reminder.md` *read below for specs*
+2) `coding-rules.md` *read below for specs*
+
 ## Slash commands
 
-- `/behavior-control:enable` — turn the plugin on for the rest of this session. No-op + notify if already on.
-- `/behavior-control:disable` — turn it off for the rest of this session. No-op + notify if already off.
-- `/behavior-control:set-verifier` — re-prompt for the speculation verifier.
-- `/behavior-control:status` — print enabled state, active verifier, which rules file is loaded, agent dir, and env overrides.
-- `/behavior-control:review` — run the uncommitted-change review process: spawn a read-only reviewer to audit your uncommitted diff, loop on the findings, and publish a report. Any arguments become a change-intent hint (e.g. `/behavior-control:review tighten the auth refactor`).
+- `/behavior-control:status` — show plugin status
+- `/behavior-control:review` — spawn a read-only reviewer to audit your uncommitted changes and converse with the session agent. Up to 6 conversation rounds with the session agent, with up to 4 clarifying questions allowed per round.
+- `/behavior-control:set-verifier` — set speculation verifier model (cheaper is probably better here)
+- `/behavior-control:enable` — turn on
+- `/behavior-control:disable` — turn off
 
-None of these persist across sessions (except `set-verifier`, which overwrites the persisted config).
+## Response-rules reminder
 
-## Coding-rules resolution (for the post-edit review reminder)
-
-The post-edit review reminder cites the project's coding rules inline when present. Resolution order:
-
-1. `./coding-rules.md` in the current working directory (project-local; always wins).
-2. `<agentDir>/coding-rules.md` (global fallback, where `<agentDir>` is `~/.omp/agent` or `~/.pi/agent`).
-3. None — the reminder still fires, but without a rules section.
-
-If both files are absent at session start, you get an actionable dialog (not just a notification): create an empty `coding-rules.md` at the project root, create one under `<agentDir>`, or continue without rules for this session. Choosing a create option writes the empty file for you to fill in.
-
-`coding-rules.md` is for the moment-of-edit reminder, not the system prompt — pi/OMP already auto-load `AGENTS.md`/`CLAUDE.md` for that.
-
-## Response-rules reminder (injected every turn)
-
-You may like to inject response rules inline at every agent turn to remind the agent and keep the agent on track with your expectations. You should keep these as brief as possible. For example, you may like to tell the agent to be concise and clear, as opposed to being overly verbose. [See an example here](example/response-rules-reminder.md).
+You may like to inject response rules inline at every agent turn to remind the agent about response/communication style. You should keep these as brief as possible. For example, you may like to tell the agent to be concise and clear, as opposed to being overly verbose. [See an example here](example/response-rules-reminder.md).
 
 Resolution order (same as coding-rules):
 
-1. `./response-rules-reminder.md` in the current working directory (project-local; always wins).
-2. `<agentDir>/response-rules-reminder.md` (global fallback, where `<agentDir>` is `~/.omp/agent` or `~/.pi/agent`).
-3. None — nothing is injected; the system prompt is left untouched.
+1) `./response-rules-reminder.md` in the current working directory (project-local; always wins).
+2) `<agentDir>/response-rules-reminder.md` (global fallback, where `<agentDir>` is `~/.omp/agent` or `~/.pi/agent`).
+3) None — nothing is injected; the system prompt is left untouched.
 
-Like coding-rules, if neither file exists at session start you get an actionable dialog offering to create an empty `response-rules-reminder.md` at the project root or under `<agentDir>`, or to skip it this session. The trigger is filesystem existence, so once the file exists (even empty) the dialog will not re-fire next session.
+## Coding Rules
 
-## Uncommitted change review
+1) Coding rules can be injected after each turn as part of the post-edit/write review reminder
+2) Coding rules can be provided for the adversarial subagent reviewer slash command `/behavior-control:review`
 
-`/behavior-control:review` runs an adversarial, read-only review of your **uncommitted** changes before you commit, then loops on the findings. The plugin can't spawn a subagent itself, so the command detects the runtime's reviewer mechanism and injects a protocol the current agent drives:
+Resolution order:
+
+1) `./coding-rules.md` in the current working directory (project-local; always wins).
+2) `<agentDir>/coding-rules.md` (global fallback, where `<agentDir>` is `~/.omp/agent` or `~/.pi/agent`).
+3) None — the reminder still fires, but without a rules section.
+
+`coding-rules.md` is for the moment-of-edit reminder, not the system prompt — pi/OMP already auto-load `AGENTS.md`/`CLAUDE.md`.
+
+## Adversarial subagent review
+
+`/behavior-control:review` runs an adversarial, read-only review of your **uncommitted** changes before you commit, then loops on the findings.
 
 - **OMP** — uses the native `task` tool with `agent: "reviewer"` and an `irc` re-audit loop.
-- **upstream pi** — uses the bundled `uncommitted_review` tool, which spawns an isolated child `pi --mode json -p --no-session --no-extensions` running a read-only reviewer persona. This needs `pi` resolvable from the running process (it reuses the current binary); on OMP (where the current binary is not `pi`) the tool refuses and points back to the `task` path.
+- **pi** — uses the bundled `uncommitted_review` tool, which spawns an isolated child running a read-only reviewer persona.
 - **neither available** — the command notifies that review is unavailable and stops; it never fabricates a same-session "reviewer".
 
-Before injecting, the command checks preconditions (a git repo with uncommitted changes) and short-circuits with a notice when there is nothing to review. The reviewer cites your coding rules when a `coding-rules.md` resolves (same resolution as above); with none, rule-compliance checks are skipped. The command runs regardless of the enable/disable gate.
-
-## Read-before-edit gate
+## Read-before-edit/write gate
 
 pi-behavior-control intercepts every `read`, `edit`, and `write` tool call:
 
@@ -81,14 +88,14 @@ pi-behavior-control intercepts every `read`, `edit`, and `write` tool call:
 - `edit` or `write` against a path whose mtime or size has changed since the read → blocked with `"File has been modified since you read it. Re-read before editing."`.
 - `write` against a non-existent path → allowed (new-file creation).
 
-The read log is **not** wiped every turn. `before_agent_start` calls `prune()`, which advances a turn counter and evicts only entries older than the sliding window (default 4 turns — `DEFAULT_WINDOW_TURNS` in `src/tracking/turn-window.ts`). A read on turn N keeps authorizing edits through turn N+3, provided the file's mtime and size are unchanged since the read — that mtime/size revalidation (previous bullet) is what makes the wider window safe. The log is fully cleared only on `session_shutdown`.
+The read log is a window that covers 4 turns.
 
 ## Post-edit review reminder
 
 After every successful `edit` or `write`, the tool result is augmented with a review brief:
 
-1. **Review brief** — asks the agent to re-read the file as a senior engineer/architect and check style, elegance, efficiency, design/architecture consistency, caller/upstream/downstream tracing, soft-failure conditional logic, conditional args that should be required, DRY, and test intent (tests must match design intent and cover edge cases, not just exercise the code as written). Broken logic should break the app and the tests.
-2. **Approval gate** — auto-fix findings directly unless intent is unclear; if the prior response claimed completion, confirm tests ran with 0 failing this turn; if any approved scope was skipped or altered, list each deviation.
+1) **Review brief** — asks the agent to re-read the file as a senior engineer/architect and check style, elegance, efficiency, design/architecture consistency, caller/upstream/downstream tracing, soft-failure conditional logic, conditional args that should be required, DRY, and test intent (tests must match design intent and cover edge cases, not just exercise the code as written). Broken logic should break the app and the tests.
+2) **Approval gate** — auto-fix findings directly unless intent is unclear; if the prior response claimed completion, confirm tests ran with 0 failing this turn; if any approved scope was skipped or altered, list each deviation.
 
 The exact wording lives in `src/post-edit-review/review-prompt.ts` (`REVIEW_BRIEF_TEXT`).
 
@@ -96,35 +103,22 @@ The brief is injected into the edit/write tool result, so it is wrapped in an at
 
 ## Speculation check
 
-When the agent finishes its full response (`agent_end`), the chosen verifier model judges the last assistant message against a grounding rubric. The verifier never sees raw tool output — instead it gets two evidence blocks, both covering the same recent-turn sliding window:
+When the agent finishes a full response (`agent_end`), the chosen verifier model judges the response for speculation. The verifier also sees:
 
-- `<TOOL_CALLS>` — tools the agent ran recently, one deduped line each as `name target` (e.g. `read src/foo.ts`, `grep parseConfig`, `bash bun test`). Low-fidelity by design: the target is a single salient argument (path/pattern/command), never full arguments or tool output. Fed by `src/tracking/tool-call-tracker.ts`, capped at the 50 most-recent.
-- `<RECENT_INSPECTIONS>` — canonical paths the agent read or surfaced via `search`/`grep`/`find`/`ast_grep`/`lsp` (and fff's equivalents) recently (paths only, most-recent first, capped at 50). It unions the read-before-edit log with the inspection-evidence tracker (`src/tracking/inspection-tracker.ts`), so a file is grounding whether the agent `read` it or turned it up in a search.
+1) `<TOOL_CALLS>` — tools the agent ran recently, one deduped line each as `name target` (e.g. `read src/foo.ts`, `grep parseConfig`, `bash bun test`). Low-fidelity by design: the target is a single salient argument (path/pattern/command), never full arguments or tool output. Fed by `src/tracking/tool-call-tracker.ts`, capped at the 50 most-recent.
+2) `<RECENT_INSPECTIONS>` — canonical paths the agent read or surfaced via `search`/`grep`/`find`/`ast_grep`/`lsp` (and fff's equivalents) recently (paths only, most-recent first, capped at 50). It unions the read-before-edit log with the inspection-evidence tracker (`src/tracking/inspection-tracker.ts`), so a file is grounding whether the agent `read` it or turned it up in a search.
 
-All three trackers (reads, inspections, tool calls) share one sliding-turn-window base (`src/tracking/turn-window.ts`, default 4 turns), so evidence grounded by a read, a search hit, or a recent tool call all have the same lifetime. A file, path, or command in either block is grounding — a claim isn't flagged merely for being absent from one.
+All three trackers (reads, inspections, tool calls) share one sliding-turn-window base (`src/tracking/turn-window.ts`, default 4 turns), so evidence grounded by a read, a search hit, or a recent tool call all have the same lifetime.
 
 A response **passes** if it cites `file:line` references, its factual claims concern a file/path/command present in either evidence block, or it is empty/short/an acknowledgment. A response is **flagged** if it describes specific code behavior with no `file:line` citation and the file is in neither block, uses hedge words (may / might / could / probably / likely / should work) to assert how code behaves, or asserts facts about a file in neither block. When uncertain the verifier defaults to a pass. The exact wording lives in `src/speculation-check/speculation.ts` (`SYSTEM_PROMPT`).
 
-The grader returns `{"ok": true}` or `{"ok": false, "reason": "..."}`. On a flag, pi-behavior-control queues a follow-up carrying the verifier's reason, delivered as a follow-up turn (`deliverAs: "followUp"`, `triggerTurn: true`) so the agent must address it before the user gets their turn back.
+A flag is shown via a registered message renderer (`src/speculation-check/speculation-renderer.ts`) as a compact, attributed annotation — a `⚠ pi-behavior-control · speculation` tag line with the reason wrapped beneath it — instead of the default full-width `[customType]` box. Collapsed (the default) the reason is clamped to a few lines; it expands with the rest of the tool output (the "expand tools" keybinding, `ctrl+o` by default in OMP).
 
-The flag is shown via a registered message renderer (`src/speculation-check/speculation-renderer.ts`) as a compact, attributed annotation — a `⚠ pi-behavior-control · speculation` tag line with the reason wrapped beneath it — instead of the default full-width `[customType]` box. Collapsed (the default) the reason is clamped to a few lines; it expands with the rest of the tool output (the "expand tools" keybinding, `ctrl+o` by default in OMP).
+## Session lifecycle
 
-**Failure handling.** Anything that prevents the speculation check from running is surfaced as an `error`-level notification, every time it happens, so you can switch verifier or disable the plugin:
+Logs are unique to each session.
 
-- Verifier model not registered
-- No API key configured for the verifier provider
-- "Use current session model" picked but no model is currently active
-- Model call failed (15s timeout, network error, API error, auth rejection)
-- Model returned unparseable JSON for the verdict
-- Unexpected throw (programming bug) — accompanied by "Please report this."
-
-The only silent path is when `ctx.signal` aborts mid-check — that means a new turn started or you cancelled, not that the verifier is broken. 15-second timeout per check.
-
-## Session lifecycle & headless
-
-The session-entry flow (gate prompt → verifier selector → coding-rules / response-rules dialogs → active banner) runs on a fresh session **and** on in-session transitions. Upstream pi rolls `/new`, `/resume`, and `/fork` into `session_start`; OMP fires `session_start` on launch and a separate `session_switch` for those transitions, so the plugin registers both (`src/index.ts`).
-
-The verifier selector lists only models with configured auth, plus *Use current session model* (always valid). If the pre-selected pick — your persisted choice, or the default Haiku on first run — isn't available, it isn't shown; cancelling the selector in that state falls back to *Use current session model* and persists it, so a session never runs on a verifier that can only error. The runtime check itself stays fail-loud (see above): a persisted-but-unavailable verifier that you never re-pick still surfaces the per-turn error notifications.
+## Headless
 
 In a headless / no-UI run (`!ctx.hasUI`, e.g. `print` / `json` one-shot modes) there is nobody to answer prompts: unless `PI_BEHAVIOR_CONTROL=off`, the plugin enables itself silently with defaults and skips every dialog. The speculation check also no-ops without a UI, since there is no follow-up turn to deliver into.
 
@@ -136,25 +130,6 @@ PI_CODING_AGENT_DIR=/path/to/agent  # override agent-dir detection (leading ~ ex
 ```
 
 `PI_CODING_AGENT_DIR` wins over filesystem detection and determines where the persisted config (`<agentDir>/behavior-control/config.json`) and the global `coding-rules.md` / `response-rules-reminder.md` fallbacks are resolved.
-
-## Development
-
-```sh
-npm install --no-save \
-  @earendil-works/pi-coding-agent \
-  @earendil-works/pi-ai \
-  typebox \
-  @types/node \
-  @types/bun \
-  typescript
-
-npx tsc --noEmit -p tsconfig.json   # type check
-bun test                             # unit tests
-```
-
-Source files live under `src/`. No build step — pi loads `.ts` directly via jiti (upstream) or Bun's native TypeScript runtime (OMP).
-
-Those are the **upstream** peers (enough for the typecheck and tests above); OMP provides its own `@oh-my-pi/pi-coding-agent` / `@oh-my-pi/pi-ai` equivalents. All four runtime peers are declared optional in `package.json`, so installing under either runtime pulls only what it needs.
 
 ## Compatibility
 

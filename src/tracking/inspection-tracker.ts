@@ -122,7 +122,7 @@ export class InspectionTracker extends TurnWindowedKeyLog<TurnEntry> {
   }
 
   /**
-   * Drop everything on session shutdown so no inspection state leaks across
+   * Drop everything on session entry and shutdown so no inspection state leaks across
    * sessions. Also clears the resolution memo since absolute paths captured
    * from one project's cwd are useless to the next.
    */

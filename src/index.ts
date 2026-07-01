@@ -54,6 +54,20 @@ export default function pluginFactory(pi: ExtensionAPI): void {
   const tracker = new ReadTracker();
   const inspectionTracker = new InspectionTracker();
   const toolCallTracker = new ToolCallTracker();
+
+  // Reset per-session state and wipe all three turn-window trackers. Called on
+  // session entry — so every session (fresh launch OR an in-process /new,
+  // /resume, /fork, session_switch) starts with an empty read log — and on
+  // shutdown. Without the entry reset, a session transition would inherit the
+  // previous session's recent reads and could satisfy the read-before-edit gate
+  // for a file the new session never read (bounded by the turn window, and only
+  // while the file is unchanged on disk, but still a stale authorization).
+  const resetSessionAndTrackers = (): void => {
+    resetSessionState(state);
+    tracker.clear();
+    inspectionTracker.clear();
+    toolCallTracker.clear();
+  };
   // Register the compact renderer for speculation-flag custom messages so
   // the hook-7 verdicts print as a single attributed line instead of the
   // default full-width [customType] box. Registration is load-safe (no
@@ -85,7 +99,7 @@ export default function pluginFactory(pi: ExtensionAPI): void {
     _event: unknown,
     ctx: Parameters<Parameters<ExtensionAPI["on"]>[1]>[1],
   ): void => {
-    resetSessionState(state);
+    resetSessionAndTrackers();
 
     const envValue = readSessionGate();
     if (envValue === "on") {
@@ -316,12 +330,9 @@ export default function pluginFactory(pi: ExtensionAPI): void {
   // Runs unconditionally so any lingering state is dropped on quit/reload.
   // =========================================================================
   pi.on("session_shutdown", () => {
-    // Reset the in-memory session state too (not just the trackers) so any
-    // one-shot notifications fire fresh on the next session_start.
-    resetSessionState(state);
-    tracker.clear();
-    inspectionTracker.clear();
-    toolCallTracker.clear();
+    // Drop session state + trackers on quit/reload. Session entry also resets
+    // these; this additionally covers a shutdown with no following entry.
+    resetSessionAndTrackers();
   });
 
   // =========================================================================
