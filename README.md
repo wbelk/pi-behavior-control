@@ -43,7 +43,7 @@ After install, add:
 ## Slash commands
 
 - `/behavior-control:status` — show plugin status
-- `/behavior-control:review` — spawn a read-only reviewer to audit your uncommitted changes and converse with the session agent. Up to 6 conversation rounds with the session agent, with up to 4 clarifying questions allowed per round.
+- `/behavior-control:review` — spawn a read-only reviewer to audit your uncommitted changes and converse with the session agent. Loops up to 6 audit rounds; see "Adversarial subagent review" below.
 - `/behavior-control:set-verifier` — set speculation verifier model (cheaper is probably better here)
 - `/behavior-control:enable` — turn on
 - `/behavior-control:disable` — turn off
@@ -78,6 +78,15 @@ Resolution order:
 - **OMP** — uses the native `task` tool with `agent: "reviewer"` and an `irc` re-audit loop.
 - **pi** — uses the bundled `uncommitted_review` tool, which spawns an isolated child running a read-only reviewer persona.
 - **neither available** — the command notifies that review is unavailable and stops; it never fabricates a same-session "reviewer".
+
+### Audit round logic
+
+The session agent drives the loop (the plugin only injects the protocol):
+
+1. Reviewer audits the uncommitted diff and returns actionable findings only.
+2. For each finding the agent must apply the fix, reject it with code/test/request evidence, or ask one clarifying question.
+3. Every response triggers a re-audit. The loop ends when a pass returns zero blocking findings, or after **6 audit rounds** — whichever comes first.
+4. If blocking findings remain at the 6-round limit, the agent stops and escalates to the user; it never declares a pass early.
 
 ## Read-before-edit/write gate
 
