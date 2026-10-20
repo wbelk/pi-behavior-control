@@ -93,7 +93,7 @@ Coding rules are for moment-of-edit and explicit review reminders, not the syste
 
 `/behavior-control:review` starts an agent-guided adversarial review of your **uncommitted** changes before you commit. The plugin injects the protocol, but the session agent—not a plugin state machine—follows the findings and re-audit instructions.
 
-- **OMP** — uses the native `task` tool with `agent: "reviewer"` and asks the session agent to use an `irc` re-audit loop.
+- **OMP** — uses the native `task` tool with `agent: "reviewer"`. Each audit round starts a fresh reviewer; results are delivered automatically without polling, and every re-audit carries forward the original review inputs, prior stable-ID findings and dispositions, and current verification evidence.
 - **pi** — uses the bundled `uncommitted_review` tool, which pre-collects fixed Git status/diff evidence and spawns a child with read/search tools but no shell.
 - **neither available** — the command notifies that review is unavailable and stops; it never fabricates a same-session "reviewer".
 
@@ -107,21 +107,22 @@ The session agent drives the loop; the plugin injects these instructions but doe
 4. Treat correctness, security/privacy, data-loss, required-contract, build/test, and missing-required-behavior failures as blocking. Treat demonstrated maintainability, performance, or readability concerns without current failure as non-blocking. Style preference alone is not a finding.
 5. Resolve every finding from one response as a batch, then request one re-audit. Each re-audit preserves prior IDs and classifies them as resolved, rejected with sufficient evidence, or still open.
 6. Accept verification evidence only when it includes the exact command, exit status, and observed output or counts.
-7. Run relevant verification after the latest file change, then request a final re-audit of that exact verified worktree.
-8. Any later file change invalidates the reviewer pass and affected verification. Repeat verification and final re-audit until one unchanged worktree has both successful verification and `Blocking findings: 0`.
-9. Stop after **6 total audit rounds**. If blocking findings remain, escalate to the user instead of declaring a pass.
+7. Run relevant verification after the latest file change.
+8. Capture the verified worktree's Git status, binary-safe unstaged and staged diffs with text conversion disabled, and untracked-file hashes, then request a final re-audit of that exact snapshot.
+9. Immediately before reporting, collect the same evidence again and compare it byte-for-byte with the reviewed snapshot. Any difference invalidates the reviewer pass and affected verification; repeat verification and final re-audit until one unchanged snapshot has both successful verification and `Blocking findings: 0`.
+10. Stop after **6 total audit rounds**. If blocking findings remain, escalate to the user instead of declaring a pass.
 
 ### Final report format
 
-Immediately before reporting, the session agent collects fresh `git status --short`, unstaged `git diff --numstat`, and staged `git diff --cached --numstat` output. It merges and deduplicates staged, unstaged, and untracked paths instead of reusing the reviewer’s earlier Git snapshot.
+The final report lists only files modified while resolving reviewer findings. Files changed by the original implementation before review began are excluded. Final Git evidence confirms that the reviewed worktree stayed unchanged; it does not supply this review-only change list.
 
-Every changed file appears exactly once:
+### Changes made during review
 
-| Filename | Diff | Reason |
+| Filename | Finding | Change |
 |---|---|---|
-| `src/example.ts` | `+12 / -4` — Added validation and changed error handling | Prevent invalid state |
+| `src/example.ts` | `B1` | Added invalid-state validation |
 
-Filenames are repository-relative. **Diff** combines final added/removed line statistics with a concise change summary (`binary` when line counts are unavailable). Untracked files count as full-file additions. **Reason** ties the file to the approved ask or a reviewer finding.
+Filenames are repository-relative. **Finding** contains the stable reviewer ID or IDs that caused the edit. **Change** briefly describes the reviewer-driven correction. Multiple corrections to one file share one row. If the review causes no file changes, the section reports `None`. Numerical line statistics are omitted because the final Git diff also contains the original implementation and cannot isolate review-only edits without a baseline snapshot.
 
 Actual verification is reported separately:
 
@@ -129,7 +130,7 @@ Actual verification is reported separately:
 |---|---|---|
 | `bun test` | `exit 0` | 42 tests passed, 0 failed |
 
-Each row contains an exact command run against the final unchanged worktree, its exit status, and observed output or counts. Unrun verification is reported as `Not run` with the reason, never implied successful. Empty report sections use `None`, and findings are not repeated across sections. Both tables remain agent-guided output rather than plugin-enforced rendering.
+Each verification row contains an exact command run against the final unchanged worktree, its exit status, and observed output or counts. Unrun verification is reported as `Not run` with the reason, never implied successful. Empty report sections use `None`, and findings are not repeated across sections. The change section and verification table remain agent-guided output rather than plugin-enforced rendering.
 
 ## Read-before-edit/write gate
 

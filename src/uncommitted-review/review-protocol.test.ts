@@ -6,7 +6,7 @@ import {
 } from "./review-protocol.ts";
 
 describe("buildReviewProtocol", () => {
-  test("omp adapter drives the native task tool with an irc loop", () => {
+  test("omp adapter starts a fresh task reviewer per round without polling", () => {
     const text = buildReviewProtocol({
       runtime: "omp",
       toolName: REVIEW_TOOL_NAME,
@@ -14,7 +14,14 @@ describe("buildReviewProtocol", () => {
     });
     expect(text).toContain("`task` tool");
     expect(text).toContain('agent: "reviewer"');
-    expect(text).toContain("`irc`");
+    expect(text).toContain("delivers the reviewer result automatically");
+    expect(text).toContain("do not poll");
+    expect(text).toContain("use `wait`");
+    expect(text).toContain("call `task` again with a fresh reviewer");
+    expect(text).toContain("original review inputs");
+    expect(text).toContain("previous stable-ID finding");
+    expect(text).toContain("current verification evidence");
+    expect(text).not.toMatch(/\b(?:async|job|irc)\b/);
     expect(text).not.toContain(`\`${REVIEW_TOOL_NAME}\` tool`);
   });
 
@@ -26,6 +33,30 @@ describe("buildReviewProtocol", () => {
     });
     expect(text).toContain(`\`${REVIEW_TOOL_NAME}\` tool`);
     expect(text).not.toContain("`task` tool");
+  });
+
+  test("reports only files changed to resolve reviewer findings", () => {
+    const text = buildReviewProtocol({
+      runtime: "omp",
+      toolName: REVIEW_TOOL_NAME,
+      rulesSource: null,
+    });
+    expect(text).toContain("### Changes made during review");
+    expect(text).toContain("| Filename | Finding | Change |");
+    expect(text).toContain("only files modified while resolving reviewer findings");
+    expect(text).toContain("Exclude files changed only by the original implementation");
+    expect(text).toContain("If the review caused no file changes, write `None`");
+    expect(text).toContain("`git status --short`");
+    expect(text).toContain("`git diff --no-ext-diff --binary --no-textconv`");
+    expect(text).toContain(
+      "`git diff --cached --no-ext-diff --binary --no-textconv`",
+    );
+    expect(text).toContain("content hashes for every untracked file");
+    expect(text).toContain("compare them byte-for-byte");
+    expect(text).toContain("Use this evidence only to confirm the worktree is unchanged");
+    expect(text).not.toContain("### Files changed");
+    expect(text).not.toContain("git diff --numstat");
+    expect(text).not.toContain("| Filename | Diff | Reason |");
   });
 
   test("tells the reviewer how to apply directory rules", () => {

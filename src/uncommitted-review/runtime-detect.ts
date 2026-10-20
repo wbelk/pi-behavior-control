@@ -5,8 +5,8 @@ export type ReviewRuntime = "omp" | "pi" | "none";
 // Decide which reviewer mechanism the current agent should drive, from the
 // session's active tools.
 //
-//   - OMP exposes the native `task` tool -> preferred (richer loop via `irc`
-//     and `job`, no child process, bundled `reviewer` agent).
+//   - OMP exposes the native `task` tool -> preferred (bundled `reviewer`
+//     agent, no child process).
 //   - Upstream pi has no `task`; the plugin registers REVIEW_TOOL_NAME there
 //     (and on OMP too, but `task` wins).
 //   - Neither present -> review is unavailable (the process's "stop and report

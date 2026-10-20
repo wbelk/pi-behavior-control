@@ -77,7 +77,12 @@ export function buildReviewProtocol(opts: ProtocolOptions): string {
 
   const spawnStep =
     opts.runtime === "omp"
-      ? `3. Spawn an independent reviewer with the \`task\` tool: \`agent: "reviewer"\`, a shared \`context\` carrying the inputs and reviewer-output contract above, and one scoped assignment to audit the uncommitted diff. \`task\` runs in the background when async is enabled -- await its delivered result (or poll \`job\`) before acting on it, and use \`irc\` to follow up with the same reviewer for re-audits. Never treat a not-yet-returned reviewer as a pass.`
+      ? [
+          `3. Start each audit round by spawning a fresh independent reviewer with the \`task\` tool: \`agent: "reviewer"\`, a shared \`context\` carrying the original review inputs and reviewer-output contract above, and one scoped assignment to audit the current uncommitted diff.`,
+          "`task` returns immediately and delivers the reviewer result automatically; do not poll. If no other work is actionable while the reviewer runs, use `wait`.",
+          "For every re-audit, call `task` again with a fresh reviewer and include the original review inputs, every previous stable-ID finding and disposition with its evidence, and current verification evidence.",
+          "Never treat a not-yet-delivered reviewer result as a pass.",
+        ].join(" ")
       : `3. Spawn an independent reviewer by calling the \`${opts.toolName}\` tool with \`task\` set to the inputs and reviewer-output contract above plus "Audit the current uncommitted diff and return actionable findings only." Each re-audit is a fresh \`${opts.toolName}\` call, so include the previous stable-ID findings and every disposition with its evidence in the next \`task\`.`;
 
   return [
@@ -97,17 +102,17 @@ export function buildReviewProtocol(opts: ProtocolOptions): string {
     spawnStep,
     "4. Resolve all findings from the reviewer response as one batch: apply each fix, reject it with code/test/request evidence, or ask one clarifying question. Send one consolidated response listing each stable finding ID, its disposition, and its evidence, then request one re-audit. Require the reviewer to classify every prior ID as `resolved`, `rejected with sufficient evidence`, or `still open`. Continue until the reviewer reports `Blocking findings: 0` or 6 total audit rounds are reached; if blocking findings remain at the limit, stop and escalate to the user.",
     "5. After the latest file change, run the relevant verification yourself (tests/build as appropriate). Fix failures and rerun affected verification until it passes or the review is blocked.",
-    "6. Request a final re-audit of the exact verified worktree. Any file change after successful verification or after the reviewer response invalidates that evidence: rerun affected verification, then request another final re-audit. Do not report pass until one unchanged worktree has both successful verification and a final `Blocking findings: 0` response.",
-    "7. Immediately before reporting, collect fresh `git status --short`, unstaged `git diff --numstat`, and staged `git diff --cached --numstat`. Merge and deduplicate their paths. For a path present in both diffs, derive final combined statistics instead of adding overlapping counts. Count each untracked file as a full-file addition; use `binary` when line counts are unavailable. Do not reuse Git evidence captured before the final re-audit.",
-    "8. Publish the final report: status (pass | blocked), the required Files changed and Verification tables below, reviewer rounds, findings applied, findings rejected with evidence, non-blocking/nit deferred, final reviewer result, and remaining risk. Use `None` for empty sections and do not repeat the same finding in multiple sections. Cite the final reviewer response and actual verification output.",
+    "6. Capture the verified worktree with `git status --short`, `git diff --no-ext-diff --binary --no-textconv`, `git diff --cached --no-ext-diff --binary --no-textconv`, and content hashes for every untracked file, then request a final re-audit of that exact snapshot. Any later file change invalidates the reviewer pass and affected verification: repeat verification, capture a new snapshot, and request another final re-audit. Do not report pass until one snapshot has both successful verification and a final `Blocking findings: 0` response.",
+    "7. Immediately before reporting, collect the same Git status, unstaged diff, staged diff, and untracked-file hashes again and compare them byte-for-byte with the snapshot audited by the final reviewer. If they differ, repeat affected verification and the final re-audit. Use this evidence only to confirm the worktree is unchanged; never derive the review-change log from Git status or diffs. Build that log separately from files you modified while resolving reviewer findings. Include each such file once with the stable finding ID or IDs that caused the edit and a concise description. Exclude files changed only by the original implementation. If no reviewer finding caused a file change, report `None`.",
+    "8. Publish the final report: status (pass | blocked), the required Changes made during review and Verification sections below, reviewer rounds, findings applied, findings rejected with evidence, non-blocking/nit deferred, final reviewer result, and remaining risk. Use `None` for empty sections and do not repeat the same finding in multiple sections. Cite the final reviewer response and actual verification output.",
     "",
-    "### Files changed",
+    "### Changes made during review",
     "",
-    "| Filename | Diff | Reason |",
+    "| Filename | Finding | Change |",
     "|---|---|---|",
-    "| `path/from/repository/root` | `+<added> / -<removed>` — <concise diff summary> | <why this file changed> |",
+    "| `path/from/repository/root` | `B1` | <concise description of the reviewer-driven change> |",
     "",
-    "Include every staged, unstaged, and untracked changed file exactly once. Use repository-relative filenames and the fresh Git facts from step 7. In Diff, combine line statistics with a concise human-readable summary; use `binary` when line counts are unavailable. In Reason, tie the change to the approved ask or a reviewer finding.",
+    "Include only files modified while resolving reviewer findings. Use repository-relative filenames, list the stable finding ID or IDs that caused each edit, and combine multiple review-driven edits to one file into one row. Exclude files changed only by the original implementation and omit line statistics. If the review caused no file changes, write `None` instead of a table row.",
     "",
     "### Verification",
     "",
