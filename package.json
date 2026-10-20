@@ -15,6 +15,11 @@
     "type": "git",
     "url": "https://github.com/wbelk/pi-behavior-control"
   },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "check": "bun run typecheck && bun run test"
+  },
   "pi": {
     "extensions": [
       "./src/index.ts"

@@ -17,6 +17,7 @@ interface StubUI {
   selectResult: string | undefined;
   selectCalls: { title: string; options: string[] }[];
   availableModels?: { provider: string; id: string }[];
+  notifications?: Array<{ message: string; type: string | undefined }>;
 }
 
 // Minimal ExtensionContext shape — only the fields chooseVerifier reads.
@@ -29,6 +30,9 @@ function makeCtx(stub: StubUI) {
       select: (title: string, options: string[]) => {
         stub.selectCalls.push({ title, options });
         return Promise.resolve(stub.selectResult);
+      },
+      notify: (message: string, type: string | undefined) => {
+        (stub.notifications ??= []).push({ message, type });
       },
     },
     modelRegistry: {
@@ -256,5 +260,36 @@ describe("chooseVerifier", () => {
     expect(result.choice).toBe("session-model");
     expect(result.persisted).toBe(true);
     expect(loadConfig()).toEqual({ verifier: "session-model" });
+  });
+
+  test("save failure is visible and preserves the previous verifier", async () => {
+    const previous: VerifierChoice = {
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+    };
+    saveConfig({ verifier: previous });
+    const configDir = path.join(tmp, "behavior-control");
+    fs.chmodSync(configDir, 0o500);
+
+    try {
+      const stub: StubUI = {
+        hasUI: true,
+        selectResult: "Use current session model",
+        selectCalls: [],
+        notifications: [],
+      };
+      const result = await callChoose(stub);
+
+      expect(result).toEqual({ choice: previous, persisted: false });
+      expect(loadConfig()).toEqual({ verifier: previous });
+      const notifications = stub.notifications ?? [];
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]?.type).toBe("error");
+      expect(notifications[0]?.message).toContain(
+        "could not save verifier selection",
+      );
+    } finally {
+      fs.chmodSync(configDir, 0o700);
+    }
   });
 });

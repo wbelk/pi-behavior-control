@@ -1,14 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { loadRules } from "../post-edit-review/rules-source.ts";
+import { resolveRulesSource } from "../post-edit-review/rules-source.ts";
 import { REVIEW_TOOL_NAME, buildReviewProtocol } from "./review-protocol.ts";
 import { detectReviewRuntime } from "./runtime-detect.ts";
 
-export type Precondition = "ok" | "not-a-repo" | "clean";
+export type Precondition = "ok" | "not-a-repo" | "clean" | "git-error";
 
-// Best-effort precondition check (the process's "Preconditions" section). The
-// try/catch degrades to "ok" when `pi.exec` is unavailable on the runtime or
-// git fails to spawn, so the injected protocol's own precondition step is the
-// backstop rather than crashing the command.
+// Git status is required to decide whether review can start. Timeouts and
+// execution failures are distinct from a clean tree and stop the command.
 export async function checkPreconditions(
   pi: ExtensionAPI,
   cwd: string,
@@ -18,15 +16,12 @@ export async function checkPreconditions(
       cwd,
       timeout: 5000,
     });
-    // A timeout/abort returns killed:true with a non-zero code. That is not a
-    // "not a repo" signal -- degrade to "ok" so the injected protocol's own
-    // precondition step runs instead of a false "nothing to review".
-    if (result.killed) return "ok";
+    if (result.killed) return "git-error";
     if (result.code !== 0) return "not-a-repo";
     if (result.stdout.trim().length === 0) return "clean";
     return "ok";
   } catch {
-    return "ok";
+    return "git-error";
   }
 }
 
@@ -52,9 +47,16 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
       "Run the uncommitted-change review process (spawns a read-only reviewer subagent).",
     handler: async (args, ctx) => {
       const precondition = await checkPreconditions(pi, ctx.cwd);
+      if (precondition === "git-error") {
+        ctx.ui.notify(
+          "pi-behavior-control: could not inspect Git status — review not started.",
+          "error",
+        );
+        return;
+      }
       if (precondition === "not-a-repo") {
         ctx.ui.notify(
-          "pi-behavior-control: not a git repository (or git unavailable) — nothing to review.",
+          "pi-behavior-control: not a git repository — nothing to review.",
           "info",
         );
         return;
@@ -76,12 +78,14 @@ export function registerReviewCommand(pi: ExtensionAPI): void {
         return;
       }
 
-      const rules = loadRules(ctx.cwd);
+      const rulesSource = resolveRulesSource(ctx.cwd);
       const intentHint = args.trim().length > 0 ? args.trim() : undefined;
       const prompt = buildReviewProtocol({
         runtime,
         toolName: REVIEW_TOOL_NAME,
-        rulesPath: rules?.path ?? null,
+        rulesSource: rulesSource
+          ? { kind: rulesSource.kind, path: rulesSource.path }
+          : null,
         intentHint,
       });
       pi.sendUserMessage(prompt);

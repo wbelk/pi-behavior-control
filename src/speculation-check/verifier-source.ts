@@ -62,8 +62,7 @@ export async function chooseVerifier(ctx: ExtensionContext): Promise<ChooseVerif
 
   if (!ctx.hasUI) {
     if (!config?.verifier) {
-      saveConfigSafely({ ...(config ?? {}), verifier: DEFAULT_VERIFIER });
-      return { choice: DEFAULT_VERIFIER, persisted: true };
+      return saveVerifierChoice(ctx, config ?? {}, previous, DEFAULT_VERIFIER);
     }
     return { choice: previous, persisted: false };
   }
@@ -87,8 +86,7 @@ export async function chooseVerifier(ctx: ExtensionContext): Promise<ChooseVerif
       previous !== "session-model" &&
       !ordered.some((o) => choicesEqual(o.value, previous))
     ) {
-      saveConfigSafely({ ...(config ?? {}), verifier: "session-model" });
-      return { choice: "session-model", persisted: true };
+      return saveVerifierChoice(ctx, config ?? {}, previous, "session-model");
     }
     return { choice: previous, persisted: false };
   }
@@ -100,8 +98,7 @@ export async function chooseVerifier(ctx: ExtensionContext): Promise<ChooseVerif
     return { choice: previous, persisted: false };
   }
 
-  saveConfigSafely({ ...(config ?? {}), verifier: match.value });
-  return { choice: match.value, persisted: true };
+  return saveVerifierChoice(ctx, config ?? {}, previous, match.value);
 }
 
 interface VerifierOption {
@@ -176,12 +173,21 @@ function choicesEqual(a: VerifierChoice, b: VerifierChoice): boolean {
   return a.provider === b.provider && a.id === b.id;
 }
 
-function saveConfigSafely(config: UserConfig): void {
+function saveVerifierChoice(
+  ctx: ExtensionContext,
+  config: UserConfig,
+  previous: VerifierChoice,
+  choice: VerifierChoice,
+): ChooseVerifierResult {
   try {
-    saveConfig(config);
-  } catch {
-    // Persistence failed (disk full, permissions). The user's choice
-    // still applies for this session via the returned value; they'll
-    // be re-prompted next session.
+    saveConfig({ ...config, verifier: choice });
+    return { choice, persisted: true };
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : "";
+    ctx.ui.notify(
+      `pi-behavior-control: could not save verifier selection; previous verifier remains active${detail}`,
+      "error",
+    );
+    return { choice: previous, persisted: false };
   }
 }

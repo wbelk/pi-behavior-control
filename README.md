@@ -38,12 +38,12 @@ omp plugin link /absolute/path/to/pi-behavior-control
 After install, add:
 
 1) `response-rules-reminder.md` *read below for specs*
-2) `coding-rules.md` *read below for specs*
+2) A `coding-rules/` directory or compatibility `coding-rules.md` file *read below for specs*
 
 ## Slash commands
 
 - `/behavior-control:status` — show plugin status
-- `/behavior-control:review` — spawn a read-only reviewer to audit your uncommitted changes and converse with the session agent. Loops up to 6 audit rounds; see "Adversarial subagent review" below.
+- `/behavior-control:review` — inject an agent-guided protocol for a read-only reviewer to audit your uncommitted changes and converse with the session agent. The protocol asks for up to 6 audit rounds; the plugin does not technically enforce the loop. See "Adversarial subagent review" below.
 - `/behavior-control:set-verifier` — set speculation verifier model (cheaper is probably better here)
 - `/behavior-control:enable` — turn on
 - `/behavior-control:disable` — turn off
@@ -52,7 +52,7 @@ After install, add:
 
 You may like to inject response rules inline at every agent turn to remind the agent about response/communication style. You should keep these as brief as possible. For example, you may like to tell the agent to be concise and clear, as opposed to being overly verbose. [See an example here](example/response-rules-reminder.md).
 
-Resolution order (same as coding-rules):
+Resolution order:
 
 1) `./response-rules-reminder.md` in the current working directory (project-local; always wins).
 2) `<agentDir>/response-rules-reminder.md` (global fallback, where `<agentDir>` is `~/.omp/agent` or `~/.pi/agent`).
@@ -60,44 +60,87 @@ Resolution order (same as coding-rules):
 
 ## Coding Rules
 
-1) Coding rules can be injected after each turn as part of the post-edit/write review reminder
-2) Coding rules can be provided for the adversarial subagent reviewer slash command `/behavior-control:review`
+Coding rules are used in two places:
 
-Resolution order:
+1) Successful edit/write results include the applicable rules in the post-edit review reminder.
+2) `/behavior-control:review` tells the reviewer to apply the rules for every language represented in the changed files.
 
-1) `./coding-rules.md` in the current working directory (project-local; always wins).
-2) `<agentDir>/coding-rules.md` (global fallback, where `<agentDir>` is `~/.omp/agent` or `~/.pi/agent`).
-3) None — the reminder still fires, but without a rules section.
+Directory layout:
 
-`coding-rules.md` is for the moment-of-edit reminder, not the system prompt — pi/OMP already auto-load `AGENTS.md`/`CLAUDE.md`.
+```text
+coding-rules/
+  coding-rules.md
+  coding-rules.typescript.md
+  coding-rules.javascript.md
+  coding-rules.css.md
+```
+
+`coding-rules.md` contains shared rules. For a file edit, the plugin appends the matching `coding-rules.<language>.md` after the shared rules. For example, `.ts`, `.tsx`, `.mts`, and `.cts` use `coding-rules.typescript.md`; `.js`, `.jsx`, `.mjs`, and `.cjs` use `coding-rules.javascript.md`. Common aliases also cover Markdown, YAML, shell, Python, Ruby, Rust, C#, C++, and Kotlin. CSS, SCSS, Less, HTML, EJS, JSON, Go, Java, PHP, and Swift use their lower-case language names directly. Unknown extensions receive shared rules only.
+
+Source precedence:
+
+1) `./coding-rules/` in the current working directory.
+2) `./coding-rules.md` compatibility file.
+3) `<agentDir>/coding-rules/` global directory.
+4) `<agentDir>/coding-rules.md` global compatibility file.
+5) None — the reminder still fires, but without a rules section.
+
+The first available source wins; project and global sources are never merged. A compatibility file is shared-only.
+
+Coding rules are for moment-of-edit and explicit review reminders, not the system prompt — pi/OMP already auto-load `AGENTS.md`/`CLAUDE.md`.
 
 ## Adversarial subagent review
 
-`/behavior-control:review` runs an adversarial, read-only review of your **uncommitted** changes before you commit, then loops on the findings.
+`/behavior-control:review` starts an agent-guided adversarial review of your **uncommitted** changes before you commit. The plugin injects the protocol, but the session agent—not a plugin state machine—follows the findings and re-audit instructions.
 
-- **OMP** — uses the native `task` tool with `agent: "reviewer"` and an `irc` re-audit loop.
-- **pi** — uses the bundled `uncommitted_review` tool, which spawns an isolated child running a read-only reviewer persona.
+- **OMP** — uses the native `task` tool with `agent: "reviewer"` and asks the session agent to use an `irc` re-audit loop.
+- **pi** — uses the bundled `uncommitted_review` tool, which pre-collects fixed Git status/diff evidence and spawns a child with read/search tools but no shell.
 - **neither available** — the command notifies that review is unavailable and stops; it never fabricates a same-session "reviewer".
 
 ### Audit round logic
 
-The session agent drives the loop (the plugin only injects the protocol):
+The session agent drives the loop; the plugin injects these instructions but does not technically enforce them:
 
-1. Reviewer audits the uncommitted diff and returns actionable findings only.
-2. For each finding the agent must apply the fix, reject it with code/test/request evidence, or ask one clarifying question.
-3. Every response triggers a re-audit. The loop ends when a pass returns zero blocking findings, or after **6 audit rounds** — whichever comes first.
-4. If blocking findings remain at the 6-round limit, the agent stops and escalates to the user; it never declares a pass early.
+1. Check every original requirement and report only issues introduced or worsened by the uncommitted changes.
+2. Require a concrete execution path or affected caller, failing input or state, impact, and minimal fix for every finding.
+3. Use stable IDs: `B1`, `B2`, ... for blocking findings and `N1`, `N2`, ... for non-blocking findings.
+4. Treat correctness, security/privacy, data-loss, required-contract, build/test, and missing-required-behavior failures as blocking. Treat demonstrated maintainability, performance, or readability concerns without current failure as non-blocking. Style preference alone is not a finding.
+5. Resolve every finding from one response as a batch, then request one re-audit. Each re-audit preserves prior IDs and classifies them as resolved, rejected with sufficient evidence, or still open.
+6. Accept verification evidence only when it includes the exact command, exit status, and observed output or counts.
+7. Run relevant verification after the latest file change, then request a final re-audit of that exact verified worktree.
+8. Any later file change invalidates the reviewer pass and affected verification. Repeat verification and final re-audit until one unchanged worktree has both successful verification and `Blocking findings: 0`.
+9. Stop after **6 total audit rounds**. If blocking findings remain, escalate to the user instead of declaring a pass.
+
+### Final report format
+
+Immediately before reporting, the session agent collects fresh `git status --short`, unstaged `git diff --numstat`, and staged `git diff --cached --numstat` output. It merges and deduplicates staged, unstaged, and untracked paths instead of reusing the reviewer’s earlier Git snapshot.
+
+Every changed file appears exactly once:
+
+| Filename | Diff | Reason |
+|---|---|---|
+| `src/example.ts` | `+12 / -4` — Added validation and changed error handling | Prevent invalid state |
+
+Filenames are repository-relative. **Diff** combines final added/removed line statistics with a concise change summary (`binary` when line counts are unavailable). Untracked files count as full-file additions. **Reason** ties the file to the approved ask or a reviewer finding.
+
+Actual verification is reported separately:
+
+| Command | Result | Evidence |
+|---|---|---|
+| `bun test` | `exit 0` | 42 tests passed, 0 failed |
+
+Each row contains an exact command run against the final unchanged worktree, its exit status, and observed output or counts. Unrun verification is reported as `Not run` with the reason, never implied successful. Empty report sections use `None`, and findings are not repeated across sections. Both tables remain agent-guided output rather than plugin-enforced rendering.
 
 ## Read-before-edit/write gate
 
 pi-behavior-control intercepts every `read`, `edit`, and `write` tool call:
 
-- `read` → records the path (canonicalized via `realpathSync` so case-different paths on macOS APFS / Windows NTFS collapse correctly) plus file mtime + size.
+- successful `read` result → records the path (canonicalized via `realpathSync` so case-different paths on macOS APFS / Windows NTFS collapse correctly) plus file mtime + size; a failed read does not authorize an edit.
 - `edit` or `write` against a path not in the read log (never read, or last read outside the sliding window) that also exists on disk → blocked with `"Read the file before editing it. (read log keeps the last few turns)"`.
 - `edit` or `write` against a path whose mtime or size has changed since the read → blocked with `"File has been modified since you read it. Re-read before editing."`.
 - `write` against a non-existent path → allowed (new-file creation).
 
-The read log is a window that covers 4 turns.
+The read log covers four turns: the turn containing the successful read plus the next three turns. Every edit still revalidates file mtime and size.
 
 ## Post-edit review reminder
 
@@ -112,7 +155,7 @@ The brief is injected into the edit/write tool result, so it is wrapped in an at
 
 ## Speculation check
 
-When the agent finishes a full response (`agent_end`), the chosen verifier model judges the response for speculation. The verifier also sees:
+When the agent finishes a full response (`agent_end`), the plugin sends the assistant response and limited recent activity evidence to the selected verifier model. It does not send tool-result contents. The bounded evidence is:
 
 1) `<TOOL_CALLS>` — tools the agent ran recently, one deduped line each as `name target` (e.g. `read src/foo.ts`, `grep parseConfig`, `bash bun test`). Low-fidelity by design: the target is a single salient argument (path/pattern/command), never full arguments or tool output. Fed by `src/tracking/tool-call-tracker.ts`, capped at the 50 most-recent.
 2) `<RECENT_INSPECTIONS>` — canonical paths the agent read or surfaced via `search`/`grep`/`find`/`ast_grep`/`lsp` (and fff's equivalents) recently (paths only, most-recent first, capped at 50). It unions the read-before-edit log with the inspection-evidence tracker (`src/tracking/inspection-tracker.ts`), so a file is grounding whether the agent `read` it or turned it up in a search.
@@ -138,7 +181,7 @@ PI_BEHAVIOR_CONTROL=on|off          # session gate; unset = prompt
 PI_CODING_AGENT_DIR=/path/to/agent  # override agent-dir detection (leading ~ expanded); else ~/.omp/agent or ~/.pi/agent
 ```
 
-`PI_CODING_AGENT_DIR` wins over filesystem detection and determines where the persisted config (`<agentDir>/behavior-control/config.json`) and the global `coding-rules.md` / `response-rules-reminder.md` fallbacks are resolved.
+`PI_CODING_AGENT_DIR` wins over filesystem detection and determines where the persisted config (`<agentDir>/behavior-control/config.json`), global `coding-rules/` directory or compatibility file, and `response-rules-reminder.md` fallback are resolved.
 
 ## Compatibility
 

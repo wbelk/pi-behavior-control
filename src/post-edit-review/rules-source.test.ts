@@ -2,111 +2,176 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { __clearCacheForTests, loadRules } from "./rules-source.ts";
+import {
+  __clearCacheForTests,
+  languageForPath,
+  loadRules,
+  resolveRulesSource,
+} from "./rules-source.ts";
 
-// Two scratch dirs per test: one acts as the project (cwd) and one acts as
-// the agent dir (via PI_CODING_AGENT_DIR override).
 let cwd: string;
 let agent: string;
-let prevEnv: string | undefined;
+let previousAgentDir: string | undefined;
 
 beforeEach(() => {
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pi-behavior-control-rs-cwd-"));
   agent = fs.mkdtempSync(path.join(os.tmpdir(), "pi-behavior-control-rs-agent-"));
-  prevEnv = process.env.PI_CODING_AGENT_DIR;
+  previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agent;
   __clearCacheForTests();
 });
 
 afterEach(() => {
-  if (prevEnv === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = prevEnv;
+  if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
   fs.rmSync(cwd, { recursive: true, force: true });
   fs.rmSync(agent, { recursive: true, force: true });
 });
 
-function writeCwdRules(body: string): void {
-  fs.writeFileSync(path.join(cwd, "coding-rules.md"), body, "utf-8");
+function writeRulesFile(root: string, relativePath: string, body: string): string {
+  const filePath = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, body, "utf-8");
+  return filePath;
 }
 
-function writeMasterRules(body: string): void {
-  fs.writeFileSync(path.join(agent, "coding-rules.md"), body, "utf-8");
-}
+describe("resolveRulesSource", () => {
+  test("returns null when no rules source exists", () => {
+    expect(resolveRulesSource(cwd)).toBeNull();
+  });
+
+  test("uses project directory, project file, global directory, global file precedence", () => {
+    const globalFile = writeRulesFile(agent, "coding-rules.md", "global-file");
+    const globalDirectory = path.join(agent, "coding-rules");
+    writeRulesFile(globalDirectory, "coding-rules.md", "global-directory");
+    const projectFile = writeRulesFile(cwd, "coding-rules.md", "project-file");
+    const projectDirectory = path.join(cwd, "coding-rules");
+    writeRulesFile(projectDirectory, "coding-rules.md", "project-directory");
+
+    expect(resolveRulesSource(cwd)).toEqual({
+      source: "cwd",
+      kind: "directory",
+      path: projectDirectory,
+    });
+
+    fs.rmSync(projectDirectory, { recursive: true });
+    expect(resolveRulesSource(cwd)?.path).toBe(projectFile);
+
+    fs.rmSync(projectFile);
+    expect(resolveRulesSource(cwd)?.path).toBe(globalDirectory);
+
+    fs.rmSync(globalDirectory, { recursive: true });
+    expect(resolveRulesSource(cwd)?.path).toBe(globalFile);
+  });
+
+  test("an empty project directory intentionally replaces lower-precedence sources", () => {
+    writeRulesFile(agent, "coding-rules/coding-rules.md", "global");
+    const projectDirectory = path.join(cwd, "coding-rules");
+    fs.mkdirSync(projectDirectory);
+
+    expect(resolveRulesSource(cwd)?.path).toBe(projectDirectory);
+    expect(loadRules(cwd, "src/index.ts")?.text).toBe("");
+  });
+
+  test("ignores paths with the wrong filesystem kind", () => {
+    fs.mkdirSync(path.join(cwd, "coding-rules.md"));
+    fs.writeFileSync(path.join(agent, "coding-rules"), "not-a-directory");
+
+    expect(resolveRulesSource(cwd)).toBeNull();
+  });
+});
+
+describe("languageForPath", () => {
+  test.each([
+    ["src/index.ts", "typescript"],
+    ["src/view.TSX", "typescript"],
+    ["src/worker.mjs", "javascript"],
+    ["docs/guide.mdx", "markdown"],
+    ["scripts/release.zsh", "shell"],
+    ["src/theme.css", "css"],
+    ["src/main.unknown", null],
+    ["Dockerfile", null],
+  ])("maps %s to %s", (targetPath, expected) => {
+    expect(languageForPath(targetPath)).toBe(expected);
+  });
+});
 
 describe("loadRules", () => {
-  test("returns null when neither cwd nor master file exists", () => {
-    expect(loadRules(cwd)).toBeNull();
+  test("loads shared rules before matching language rules", () => {
+    const directory = path.join(cwd, "coding-rules");
+    const sharedPath = writeRulesFile(
+      directory,
+      "coding-rules.md",
+      "shared-rules",
+    );
+    const languagePath = writeRulesFile(
+      directory,
+      "coding-rules.typescript.md",
+      "typescript-rules",
+    );
+
+    const resolved = loadRules(cwd, "src/index.ts");
+    expect(resolved?.text).toBe("shared-rules\n\ntypescript-rules");
+    expect(resolved?.paths).toEqual([sharedPath, languagePath]);
+    expect(resolved?.language).toBe("typescript");
   });
 
-  test("returns cwd rules when only cwd file exists", () => {
-    writeCwdRules("cwd-rules-text");
-    const r = loadRules(cwd);
-    expect(r?.text).toBe("cwd-rules-text");
-    expect(r?.source).toBe("cwd");
+  test("ignores a language file for an unknown extension", () => {
+    writeRulesFile(cwd, "coding-rules/coding-rules.md", "shared-rules");
+    writeRulesFile(
+      cwd,
+      "coding-rules/coding-rules.unknown.md",
+      "must-not-apply",
+    );
+
+    const resolved = loadRules(cwd, "src/main.unknown");
+    expect(resolved?.text).toBe("shared-rules");
+    expect(resolved?.language).toBeNull();
   });
 
-  test("returns master rules when only master file exists", () => {
-    writeMasterRules("master-rules-text");
-    const r = loadRules(cwd);
-    expect(r?.text).toBe("master-rules-text");
-    expect(r?.source).toBe("master");
+  test("loads a language file when the directory has no shared file", () => {
+    writeRulesFile(
+      cwd,
+      "coding-rules/coding-rules.typescript.md",
+      "typescript-only",
+    );
+
+    expect(loadRules(cwd, "src/index.ts")?.text).toBe("typescript-only");
   });
 
-  test("cwd wins when both files exist", () => {
-    writeCwdRules("cwd-wins");
-    writeMasterRules("master-loses");
-    const r = loadRules(cwd);
-    expect(r?.text).toBe("cwd-wins");
-    expect(r?.source).toBe("cwd");
+  test("top-level compatibility files remain shared-only", () => {
+    const compatibilityPath = writeRulesFile(
+      cwd,
+      "coding-rules.md",
+      "compatibility-rules",
+    );
+    writeRulesFile(agent, "coding-rules/coding-rules.typescript.md", "ignored");
+
+    expect(loadRules(cwd, "src/index.ts")).toEqual({
+      source: "cwd",
+      kind: "file",
+      path: compatibilityPath,
+      text: "compatibility-rules",
+      paths: [compatibilityPath],
+      language: "typescript",
+    });
   });
 
-  test("a cwd file added after a previous null result is picked up next call", () => {
-    expect(loadRules(cwd)).toBeNull();
-    writeCwdRules("appeared");
-    expect(loadRules(cwd)?.text).toBe("appeared");
+  test("re-reads a changed language file during the session", () => {
+    const languagePath = writeRulesFile(
+      cwd,
+      "coding-rules/coding-rules.typescript.md",
+      "v1",
+    );
+    expect(loadRules(cwd, "src/index.ts")?.text).toBe("v1");
+
+    fs.writeFileSync(languagePath, "version-two", "utf-8");
+    expect(loadRules(cwd, "src/index.ts")?.text).toBe("version-two");
   });
 
-  test("cache hit returns the same text without re-reading from disk", () => {
-    writeCwdRules("v1");
-    const first = loadRules(cwd);
-    expect(first?.text).toBe("v1");
-
-    // Mutate the file's contents WITHOUT changing mtime or size — cache
-    // should still return v1 because the (mtime, size) fingerprint is
-    // unchanged. (Realistically same-size + same-mtime is hard to
-    // produce externally; we fake it by writing identical bytes.)
-    fs.writeFileSync(path.join(cwd, "coding-rules.md"), "v1", "utf-8");
-
-    // Cache reads via stat (mtime probably advanced from the second
-    // write). To simulate a clean cache hit we force the mtime back to
-    // the original.
-    const filePath = path.join(cwd, "coding-rules.md");
-    const stat = fs.statSync(filePath);
-    const originalMtime = stat.mtimeMs;
-    fs.utimesSync(filePath, new Date(originalMtime), new Date(originalMtime));
-
-    expect(loadRules(cwd)?.text).toBe("v1");
-  });
-
-  test("cache miss re-reads when file content + size change", () => {
-    writeCwdRules("short");
-    expect(loadRules(cwd)?.text).toBe("short");
-    writeCwdRules("now-much-longer-text"); // different size → cache miss
-    expect(loadRules(cwd)?.text).toBe("now-much-longer-text");
-  });
-
-  test("removing the cwd file falls back to master on the next call", () => {
-    writeCwdRules("cwd-only");
-    writeMasterRules("master-only");
-    expect(loadRules(cwd)?.source).toBe("cwd");
-    fs.unlinkSync(path.join(cwd, "coding-rules.md"));
-    const r = loadRules(cwd);
-    expect(r?.text).toBe("master-only");
-    expect(r?.source).toBe("master");
-  });
-
-  test("rejects directories named coding-rules.md (not a regular file)", () => {
-    fs.mkdirSync(path.join(cwd, "coding-rules.md"));
-    expect(loadRules(cwd)).toBeNull();
+  test("picks up a source created after an earlier miss", () => {
+    expect(loadRules(cwd, "src/index.ts")).toBeNull();
+    writeRulesFile(cwd, "coding-rules/coding-rules.md", "appeared");
+    expect(loadRules(cwd, "src/index.ts")?.text).toBe("appeared");
   });
 });

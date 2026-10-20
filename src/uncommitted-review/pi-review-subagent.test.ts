@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import * as fs from "node:fs";
 import { describe, expect, test } from "bun:test";
 import {
   buildPiArgs,
@@ -255,10 +256,13 @@ const assistantEndLine = (
     message: { role: "assistant", content: [{ type: "text", text }], ...extra },
   });
 
+const emptyGitOutput = async (): Promise<string> => "";
+
 describe("runReviewer", () => {
   test("returns the reviewer's final findings on success", async () => {
     const child = new FakeChild(["SIGTERM"]);
     const result = await runReviewer("audit", "/repo", undefined, {
+      runGit: emptyGitOutput,
       spawnChild: spawnReturning(child, (c) => {
         c.pushStdout(assistantEndLine("here are the findings"));
         c.terminate(null, 0);
@@ -269,10 +273,73 @@ describe("runReviewer", () => {
     expect(child.kills).toEqual([]);
   });
 
+  test("captures fixed Git evidence before spawning the shell-free reviewer", async () => {
+    const child = new FakeChild(["SIGTERM"]);
+    const gitCalls: string[] = [];
+    const outputByCommand: Record<string, string> = {
+      "status --short": " M src/index.ts\n",
+      diff: "unstaged patch\n",
+      "diff --cached": "staged patch\n",
+    };
+
+    const result = await runReviewer("audit", "/repo", undefined, {
+      runGit: async (args, cwd) => {
+        expect(cwd).toBe("/repo");
+        const command = args.join(" ");
+        gitCalls.push(command);
+        const output = outputByCommand[command];
+        if (output === undefined) throw new Error(`unexpected Git command: ${command}`);
+        return output;
+      },
+      spawnChild: (_command, args, options) => {
+        expect(options.cwd).toBe("/repo");
+        expect(args[args.indexOf("--tools") + 1]).toBe("read,grep,find,ls");
+        const taskArg = args.at(-1) ?? "";
+        const evidencePaths = taskArg
+          .split("\n")
+          .filter((line) => /^- (status|unstaged diff|staged diff): /.test(line))
+          .map((line) => line.slice(line.indexOf(": ") + 2));
+        const [statusPath, diffPath, cachedDiffPath] = evidencePaths;
+        if (!statusPath || !diffPath || !cachedDiffPath) {
+          throw new Error("reviewer task omitted a Git evidence path");
+        }
+        expect(fs.readFileSync(statusPath, "utf-8")).toBe(" M src/index.ts\n");
+        expect(fs.readFileSync(diffPath, "utf-8")).toBe("unstaged patch\n");
+        expect(fs.readFileSync(cachedDiffPath, "utf-8")).toBe("staged patch\n");
+        queueMicrotask(() => {
+          child.pushStdout(assistantEndLine("done"));
+          child.terminate(null, 0);
+        });
+        return child as unknown as ReviewerChildProcess;
+      },
+    });
+
+    expect(gitCalls).toEqual(["status --short", "diff", "diff --cached"]);
+    expect(result.content[0]?.text).toBe("done");
+  });
+
+  test("rejects zero turns and empty final output", async () => {
+    const outputs = ["", assistantEndLine("   ")];
+
+    for (const output of outputs) {
+      const child = new FakeChild(["SIGTERM"]);
+      await expect(
+        runReviewer("audit", "/repo", undefined, {
+          runGit: emptyGitOutput,
+          spawnChild: spawnReturning(child, (c) => {
+            if (output) c.pushStdout(output);
+            c.terminate(null, 0);
+          }),
+        }),
+      ).rejects.toThrow(/Reviewer failed: reviewer produced no findings/);
+    }
+  });
+
   test("throws Reviewer failed on a non-zero exit", async () => {
     const child = new FakeChild(["SIGTERM"]);
     await expect(
       runReviewer("audit", "/repo", undefined, {
+        runGit: emptyGitOutput,
         spawnChild: spawnReturning(child, (c) => {
           c.pushStderr("git blew up");
           c.terminate(null, 2);
@@ -285,6 +352,7 @@ describe("runReviewer", () => {
     const child = new FakeChild(["SIGTERM"]);
     await expect(
       runReviewer("audit", "/repo", undefined, {
+        runGit: emptyGitOutput,
         spawnChild: spawnReturning(child, (c) => {
           c.emitError(new Error("spawn pi ENOENT"));
         }),
@@ -296,6 +364,7 @@ describe("runReviewer", () => {
     const child = new FakeChild(["SIGTERM"]);
     const updates: string[] = [];
     await runReviewer("audit", "/repo", undefined, {
+      runGit: emptyGitOutput,
       spawnChild: spawnReturning(child, (c) => {
         // No trailing newline: the streamed progress must still flush on close.
         c.pushStdout(assistantEndLine("trailing findings"));
@@ -313,6 +382,7 @@ describe("runReviewer", () => {
     const child = new FakeChild(["SIGTERM"]);
     await expect(
       runReviewer("audit", "/repo", undefined, {
+        runGit: emptyGitOutput,
         spawnChild: spawnReturning(child, (c) => {
           c.pushStdout(
             assistantEndLine("boom", {
@@ -330,6 +400,7 @@ describe("runReviewer", () => {
     const child = new FakeChild(["SIGTERM"]);
     await expect(
       runReviewer("audit", "/repo", undefined, {
+        runGit: emptyGitOutput,
         spawnChild: spawnReturning(child),
         idleTimeoutMs: 15,
       }),
@@ -343,6 +414,7 @@ describe("runReviewer", () => {
     ac.abort();
     await expect(
       runReviewer("audit", "/repo", ac.signal, {
+        runGit: emptyGitOutput,
         spawnChild: spawnReturning(child),
         idleTimeoutMs: 1000,
       }),
@@ -354,6 +426,7 @@ describe("runReviewer", () => {
     const child = new FakeChild(["SIGKILL"]);
     await expect(
       runReviewer("audit", "/repo", undefined, {
+        runGit: emptyGitOutput,
         spawnChild: spawnReturning(child),
         idleTimeoutMs: 10,
         killGraceMs: 10,
@@ -365,6 +438,7 @@ describe("runReviewer", () => {
   test("clears idle and absolute timers on success so no late kill fires", async () => {
     const child = new FakeChild(["SIGTERM"]);
     await runReviewer("audit", "/repo", undefined, {
+      runGit: emptyGitOutput,
       spawnChild: spawnReturning(child, (c) => {
         c.pushStdout(assistantEndLine("done"));
         c.terminate(null, 0);
@@ -380,6 +454,7 @@ describe("runReviewer", () => {
     const child = new FakeChild(["SIGTERM"]);
     await expect(
       runReviewer("audit", "/repo", undefined, {
+        runGit: emptyGitOutput,
         spawnChild: spawnReturning(child, (c) => {
           c.pushStdout(assistantEndLine("partial findings before the kill"));
           // External SIGKILL we did not send (no timeout, no abort): the child
@@ -396,6 +471,7 @@ describe("runReviewer", () => {
   test("keeps a steadily-emitting child alive past the idle window", async () => {
     const child = new FakeChild(["SIGTERM"]);
     const result = await runReviewer("audit", "/repo", undefined, {
+      runGit: emptyGitOutput,
       spawnChild: spawnReturning(child, (c) => {
         // Emit at 40ms intervals under a 100ms idle window: each chunk re-arms
         // the watchdog, so the child survives a 120ms run (> the idle window)
@@ -421,6 +497,7 @@ describe("runReviewer", () => {
       runReviewer("audit", "/repo", undefined, {
         // One early chunk arms the (long) idle timer, then the child goes
         // quiet; the absolute backstop -- never re-armed -- is what stops it.
+        runGit: emptyGitOutput,
         spawnChild: spawnReturning(child, (c) => {
           c.pushStdout("starting review\n");
         }),
@@ -436,6 +513,7 @@ describe("runReviewer", () => {
     const child = new FakeChild(["SIGTERM"]);
     const updates: Array<{ turns: number; text: string }> = [];
     const result = await runReviewer("audit", "/repo", undefined, {
+      runGit: emptyGitOutput,
       spawnChild: spawnReturning(child, (c) => {
         c.pushStdout(assistantEndLine("first pass") + "\n");
         c.pushStdout(assistantEndLine("final findings") + "\n");
@@ -460,6 +538,7 @@ describe("runReviewer", () => {
     const child = new FakeChild(["SIGTERM"]);
     const updates: string[] = [];
     await runReviewer("audit", "/repo", undefined, {
+      runGit: emptyGitOutput,
       spawnChild: spawnReturning(child, (c) => {
         // A tool-only assistant turn ends with no text content.
         c.pushStdout(

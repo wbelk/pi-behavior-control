@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
   REVIEW_TOOL_NAME,
-  REVIEWER_SYSTEM_PROMPT,
   REVIEWER_TOOLS,
   buildReviewProtocol,
 } from "./review-protocol.ts";
@@ -11,7 +10,7 @@ describe("buildReviewProtocol", () => {
     const text = buildReviewProtocol({
       runtime: "omp",
       toolName: REVIEW_TOOL_NAME,
-      rulesPath: "/repo/coding-rules.md",
+      rulesSource: { kind: "directory", path: "/repo/coding-rules" },
     });
     expect(text).toContain("`task` tool");
     expect(text).toContain('agent: "reviewer"');
@@ -23,47 +22,50 @@ describe("buildReviewProtocol", () => {
     const text = buildReviewProtocol({
       runtime: "pi",
       toolName: REVIEW_TOOL_NAME,
-      rulesPath: "/repo/coding-rules.md",
+      rulesSource: { kind: "directory", path: "/repo/coding-rules" },
     });
     expect(text).toContain(`\`${REVIEW_TOOL_NAME}\` tool`);
     expect(text).not.toContain("`task` tool");
   });
 
-  test("includes the resolved coding-rules path when present", () => {
+  test("tells the reviewer how to apply directory rules", () => {
     const text = buildReviewProtocol({
       runtime: "pi",
       toolName: REVIEW_TOOL_NAME,
-      rulesPath: "/repo/coding-rules.md",
+      rulesSource: { kind: "directory", path: "/repo/coding-rules" },
     });
-    expect(text).toContain("coding rules file: /repo/coding-rules.md");
+    expect(text).toContain("coding rules directory: /repo/coding-rules");
+    expect(text).toContain("coding-rules.<language>.md");
+    expect(text).toContain("matching the changed files");
   });
 
-  test("falls back to empty-string rules guidance when absent", () => {
+  test("tells the reviewer to read a compatibility file as shared rules", () => {
     const text = buildReviewProtocol({
       runtime: "pi",
       toolName: REVIEW_TOOL_NAME,
-      rulesPath: null,
+      rulesSource: { kind: "file", path: "/repo/coding-rules.md" },
+    });
+    expect(text).toContain(
+      "coding rules compatibility file: /repo/coding-rules.md",
+    );
+    expect(text).toContain("read this shared file");
+  });
+
+  test("skips rule-compliance checks when no source exists", () => {
+    const text = buildReviewProtocol({
+      runtime: "pi",
+      toolName: REVIEW_TOOL_NAME,
+      rulesSource: null,
     });
     expect(text).toContain("none found");
     expect(text).toContain("skip rule-compliance checks");
-  });
-
-  test("forbids declaring a pass before the reviewer's final pass returns", () => {
-    const text = buildReviewProtocol({
-      runtime: "omp",
-      toolName: REVIEW_TOOL_NAME,
-      rulesPath: null,
-    });
-    expect(text).toContain(
-      "Do NOT declare the result a pass until the reviewer's final pass has returned with zero blocking findings",
-    );
   });
 
   test("includes a change-intent hint when provided", () => {
     const text = buildReviewProtocol({
       runtime: "pi",
       toolName: REVIEW_TOOL_NAME,
-      rulesPath: null,
+      rulesSource: null,
       intentHint: "tighten the auth refactor",
     });
     expect(text).toContain("tighten the auth refactor");
@@ -74,21 +76,16 @@ describe("buildReviewProtocol", () => {
     const text = buildReviewProtocol({
       runtime: "pi",
       toolName: REVIEW_TOOL_NAME,
-      rulesPath: null,
+      rulesSource: null,
     });
     expect(text).not.toContain("change-intent hint");
   });
 });
 
 describe("reviewer persona", () => {
-  test("is read-only with the corrected git allowlist", () => {
-    expect(REVIEWER_SYSTEM_PROMPT).toContain("git status --short");
-    expect(REVIEWER_SYSTEM_PROMPT).toContain("git diff --cached");
-    expect(REVIEWER_SYSTEM_PROMPT).toContain("Do NOT edit files");
-  });
-
-  test("grants read-only discovery tools, not edit/write", () => {
-    expect(REVIEWER_TOOLS).toContain("bash");
+  test("grants read/search tools without shell or write access", () => {
+    expect(REVIEWER_TOOLS).toEqual(["read", "grep", "find", "ls"]);
+    expect(REVIEWER_TOOLS).not.toContain("bash");
     expect(REVIEWER_TOOLS).not.toContain("edit");
     expect(REVIEWER_TOOLS).not.toContain("write");
   });

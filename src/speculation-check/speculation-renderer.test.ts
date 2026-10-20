@@ -11,11 +11,6 @@ import {
 const PREFIX = "\u26a0 pi-behavior-control \u00b7 speculation";
 
 describe("formatSpeculationLines", () => {
-  test("the attribution tag is alone on the first line", () => {
-    const lines = formatSpeculationLines("missing citation", 80, false);
-    expect(lines[0]).toBe(PREFIX);
-  });
-
   test("a short reason is indented on the second line", () => {
     const lines = formatSpeculationLines("missing citation", 80, false);
     expect(lines).toEqual([PREFIX, `${INDENT}missing citation`]);

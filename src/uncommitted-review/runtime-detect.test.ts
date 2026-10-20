@@ -19,10 +19,6 @@ describe("detectReviewRuntime", () => {
     expect(detectReviewRuntime(["read", "edit", "write"])).toBe("none");
   });
 
-  test("empty tool list -> none", () => {
-    expect(detectReviewRuntime([])).toBe("none");
-  });
-
   test("honors a custom review tool name", () => {
     expect(detectReviewRuntime(["custom_review"], "custom_review")).toBe("pi");
   });

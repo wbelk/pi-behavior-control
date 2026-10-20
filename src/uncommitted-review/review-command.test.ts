@@ -37,20 +37,20 @@ describe("checkPreconditions", () => {
     expect(await checkPreconditions(pi, "/repo")).toBe("ok");
   });
 
-  test("degrades to ok when git status is killed (timeout) despite non-zero code", async () => {
+  test("git-error when git status is killed", async () => {
     const pi = fakePi({
       exec: async () => ({ code: 143, stdout: "", stderr: "", killed: true }),
     });
-    expect(await checkPreconditions(pi, "/repo")).toBe("ok");
+    expect(await checkPreconditions(pi, "/repo")).toBe("git-error");
   });
 
-  test("degrades to ok when exec throws (e.g. unavailable on runtime)", async () => {
+  test("git-error when exec throws", async () => {
     const pi = fakePi({
       exec: async () => {
         throw new Error("no exec on this runtime");
       },
     });
-    expect(await checkPreconditions(pi, "/repo")).toBe("ok");
+    expect(await checkPreconditions(pi, "/repo")).toBe("git-error");
   });
 });
 
@@ -76,17 +76,27 @@ describe("registerReviewCommand handler", () => {
   // Register the command on a fake pi, capture the handler it registers, and
   // drive it with a fake ctx so the full orchestration (preconditions ->
   // runtime gating -> protocol payload) is exercised, not just the helpers.
-  const harness = (gitStdout: string, gitCode: number, tools: string[]) => {
+  const harness = (
+    gitStdout: string,
+    gitCode: number,
+    tools: string[],
+    gitFailure: "killed" | "throw" | null = null,
+  ) => {
     const notifications: Notification[] = [];
     const messages: string[] = [];
     let handler: ((args: string, ctx: unknown) => Promise<void>) | null = null;
     const pi = {
-      exec: async () => ({
-        code: gitCode,
-        stdout: gitStdout,
-        stderr: "",
-        killed: false,
-      }),
+      exec: async () => {
+        if (gitFailure === "throw") {
+          throw new Error("git unavailable");
+        }
+        return {
+          code: gitCode,
+          stdout: gitStdout,
+          stderr: "",
+          killed: gitFailure === "killed",
+        };
+      },
       getActiveTools: () => tools,
       registerCommand: (
         _name: string,
@@ -124,6 +134,17 @@ describe("registerReviewCommand handler", () => {
     await h.run();
     expect(h.messages).toEqual([]);
     expect(h.notifications[0]?.text).toMatch(/no uncommitted changes/);
+  });
+
+  test("Git preflight failure notifies an error and does not start review", async () => {
+    for (const failure of ["killed", "throw"] as const) {
+      const h = harness("", 143, ["task"], failure);
+      await h.run();
+      expect(h.messages).toEqual([]);
+      expect(h.notifications).toHaveLength(1);
+      expect(h.notifications[0]?.level).toBe("error");
+      expect(h.notifications[0]?.text).toMatch(/could not inspect Git status/);
+    }
   });
 
   test("no reviewer mechanism: notifies error and sends no review message", async () => {

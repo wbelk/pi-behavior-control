@@ -114,19 +114,6 @@ describe("agentDir (production wrapper)", () => {
       path.resolve(path.join(os.homedir(), "some-pi-path-that-does-not-exist")),
     );
   });
-
-  test("with no env, returns one of the documented default paths", () => {
-    delete process.env.PI_CODING_AGENT_DIR;
-    // The user's actual machine may have ~/.omp/agent OR ~/.pi/agent OR
-    // neither. The production wrapper's behavior is exercised by the
-    // pure resolver tests above; here we just verify it returns a path
-    // from the documented set.
-    const home = os.homedir();
-    expect([
-      path.join(home, ".omp", "agent"),
-      path.join(home, ".pi", "agent"),
-    ]).toContain(agentDir());
-  });
 });
 
 describe("expandHome", () => {

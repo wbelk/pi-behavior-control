@@ -23,28 +23,84 @@ export interface BlockReason {
   reason: string;
 }
 
+interface ReadFingerprint {
+  rawPath: string;
+  canonicalPath: string;
+  modifiedAt: number;
+  size: number;
+}
+
 export class ReadTracker extends TurnWindowedKeyLog<ReadEntry> {
+  private readonly pendingReads = new Map<string, ReadFingerprint>();
+
   /**
-   * Record a file read. Canonicalizes the path via `realpathSync` so
-   * case-different paths on case-insensitive filesystems (macOS APFS by
-   * default, Windows NTFS) collapse to the same key.
-   *
-   * Silently no-ops if `realpathSync` throws — pi's read tool would have
-   * failed too, so we have nothing to track.
+   * Capture a non-authorizing fingerprint immediately before a read executes.
+   * The matching successful result must complete it before the path enters the
+   * authorization log.
    */
-  record(rawPath: string): void {
-    let canonical: string;
+  beginRead(toolCallId: string, rawPath: string): void {
+    const fingerprint = this.captureFingerprint(rawPath);
+    if (fingerprint) this.pendingReads.set(toolCallId, fingerprint);
+    else this.pendingReads.delete(toolCallId);
+  }
+
+  /**
+   * Complete a pending read. Failed reads are discarded. Successful reads
+   * authorize only when the path, mtime, and size still match the pre-read
+   * fingerprint, preventing stale content from authorizing an edit.
+   */
+  completeRead(toolCallId: string, succeeded: boolean): void {
+    const fingerprint = this.pendingReads.get(toolCallId);
+    this.pendingReads.delete(toolCallId);
+    if (!succeeded || !fingerprint) return;
+
+    let canonicalPath: string;
     let stat: fs.Stats;
     try {
-      canonical = fs.realpathSync(rawPath);
-      stat = fs.statSync(canonical);
+      canonicalPath = fs.realpathSync(fingerprint.rawPath);
+      stat = fs.statSync(canonicalPath);
     } catch {
       return;
     }
-    this.log.set(canonical, {
+    if (
+      canonicalPath !== fingerprint.canonicalPath ||
+      stat.mtimeMs !== fingerprint.modifiedAt ||
+      stat.size !== fingerprint.size
+    ) {
+      return;
+    }
+    this.recordFingerprint(fingerprint);
+  }
+
+  /**
+   * Record a trusted current file state. Used after successful writes so
+   * consecutive edits remain allowed.
+   */
+  record(rawPath: string): void {
+    const fingerprint = this.captureFingerprint(rawPath);
+    if (fingerprint) this.recordFingerprint(fingerprint);
+  }
+
+  private captureFingerprint(rawPath: string): ReadFingerprint | null {
+    try {
+      const canonicalPath = fs.realpathSync(rawPath);
+      const stat = fs.statSync(canonicalPath);
+      return {
+        rawPath,
+        canonicalPath,
+        modifiedAt: stat.mtimeMs,
+        size: stat.size,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  private recordFingerprint(fingerprint: ReadFingerprint): void {
+    this.log.set(fingerprint.canonicalPath, {
       readAt: Date.now(),
-      modifiedAt: stat.mtimeMs,
-      size: stat.size,
+      modifiedAt: fingerprint.modifiedAt,
+      size: fingerprint.size,
       turn: this.currentTurn,
     });
   }
@@ -104,6 +160,11 @@ export class ReadTracker extends TurnWindowedKeyLog<ReadEntry> {
    */
   refresh(rawPath: string): void {
     this.record(rawPath);
+  }
+
+  override clear(): void {
+    super.clear();
+    this.pendingReads.clear();
   }
 
   /**

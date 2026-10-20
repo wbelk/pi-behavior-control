@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -33,6 +34,10 @@ const REVIEWER_IDLE_TIMEOUT_MS = 120_000;
 const REVIEWER_ABSOLUTE_TIMEOUT_MS = 1_800_000;
 // Grace period between SIGTERM and SIGKILL when killing a child reviewer.
 const KILL_GRACE_MS = 5_000;
+const GIT_OUTPUT_MAX_BYTES = 50 * 1024 * 1024;
+const STATUS_FILENAME = "git-status.txt";
+const DIFF_FILENAME = "git-diff.txt";
+const CACHED_DIFF_FILENAME = "git-diff-cached.txt";
 
 export interface PiArgsOptions {
   /** The reviewer assignment passed to the child pi as the prompt. */
@@ -181,35 +186,39 @@ export function parseReviewerStdout(stdout: string): ReviewerOutput {
     turns++;
     if (ev.stopReason) stopReason = ev.stopReason;
     if (ev.errorMessage) errorMessage = ev.errorMessage;
-    if (ev.text !== null) finalText = ev.text;
+    finalText = ev.text ?? "";
   }
 
   return { finalText, turns, stopReason, errorMessage };
 }
 
-interface TempPrompt {
+interface ReviewerWorkspace {
   dir: string;
-  filePath: string;
+  promptPath: string;
+  statusPath: string;
+  diffPath: string;
+  cachedDiffPath: string;
 }
 
-async function writeReviewerPrompt(): Promise<TempPrompt> {
+async function createReviewerWorkspace(): Promise<ReviewerWorkspace> {
   const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-bc-review-"));
-  const filePath = path.join(dir, "reviewer-prompt.md");
-  await fs.promises.writeFile(filePath, REVIEWER_SYSTEM_PROMPT, {
+  const workspace = {
+    dir,
+    promptPath: path.join(dir, "reviewer-prompt.md"),
+    statusPath: path.join(dir, STATUS_FILENAME),
+    diffPath: path.join(dir, DIFF_FILENAME),
+    cachedDiffPath: path.join(dir, CACHED_DIFF_FILENAME),
+  };
+  await fs.promises.writeFile(workspace.promptPath, REVIEWER_SYSTEM_PROMPT, {
     encoding: "utf-8",
     mode: 0o600,
   });
-  return { dir, filePath };
+  return workspace;
 }
 
-function cleanupReviewerPrompt(tmp: TempPrompt): void {
+function cleanupReviewerWorkspace(workspace: ReviewerWorkspace): void {
   try {
-    fs.unlinkSync(tmp.filePath);
-  } catch {
-    /* best-effort temp cleanup */
-  }
-  try {
-    fs.rmdirSync(tmp.dir);
+    fs.rmSync(workspace.dir, { recursive: true, force: true });
   } catch {
     /* best-effort temp cleanup */
   }
@@ -242,9 +251,16 @@ export type ReviewerSpawn = (
   options: { cwd: string },
 ) => ReviewerChildProcess;
 
+export type ReviewerGitRunner = (
+  args: string[],
+  cwd: string,
+) => Promise<string>;
+
 export interface RunReviewerDeps {
   /** Spawner for the child reviewer; defaults to node's child_process.spawn. */
   spawnChild?: ReviewerSpawn;
+  /** Runs one fixed Git command used to capture reviewer evidence. */
+  runGit?: ReviewerGitRunner;
   /** Kill if no output arrives for this long; defaults to REVIEWER_IDLE_TIMEOUT_MS. */
   idleTimeoutMs?: number;
   /** Hard ceiling on total run time; defaults to REVIEWER_ABSOLUTE_TIMEOUT_MS. */
@@ -262,6 +278,61 @@ const defaultSpawn: ReviewerSpawn = (command, args, options) =>
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+const execFileAsync = promisify(execFile);
+
+const defaultRunGit: ReviewerGitRunner = async (args, cwd) => {
+  const { stdout } = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf-8",
+    maxBuffer: GIT_OUTPUT_MAX_BYTES,
+    shell: false,
+  });
+  return stdout;
+};
+
+async function collectReviewerEvidence(
+  workspace: ReviewerWorkspace,
+  cwd: string,
+  runGit: ReviewerGitRunner,
+): Promise<void> {
+  let status: string;
+  let diff: string;
+  let cachedDiff: string;
+  try {
+    [status, diff, cachedDiff] = await Promise.all([
+      runGit(["status", "--short"], cwd),
+      runGit(["diff"], cwd),
+      runGit(["diff", "--cached"], cwd),
+    ]);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Reviewer failed: could not collect Git evidence: ${detail}`);
+  }
+
+  await Promise.all([
+    fs.promises.writeFile(workspace.statusPath, status, "utf-8"),
+    fs.promises.writeFile(workspace.diffPath, diff, "utf-8"),
+    fs.promises.writeFile(workspace.cachedDiffPath, cachedDiff, "utf-8"),
+  ]);
+}
+
+function buildTaskWithEvidence(
+  task: string,
+  cwd: string,
+  workspace: ReviewerWorkspace,
+): string {
+  return [
+    task,
+    "",
+    `Repository root: ${cwd}`,
+    "Git evidence was captured immediately before this reviewer started:",
+    `- status: ${workspace.statusPath}`,
+    `- unstaged diff: ${workspace.diffPath}`,
+    `- staged diff: ${workspace.cachedDiffPath}`,
+    "Read those files first. Use read, grep, find, and ls for surrounding code and untracked files; no shell tool is available.",
+  ].join("\n");
+}
+
 export async function runReviewer(
   task: string,
   cwd: string,
@@ -269,18 +340,20 @@ export async function runReviewer(
   deps: RunReviewerDeps = {},
 ): Promise<ReviewerToolResult> {
   const spawnChild = deps.spawnChild ?? defaultSpawn;
+  const runGit = deps.runGit ?? defaultRunGit;
   const idleTimeoutMs = deps.idleTimeoutMs ?? REVIEWER_IDLE_TIMEOUT_MS;
   const absoluteTimeoutMs =
     deps.absoluteTimeoutMs ?? REVIEWER_ABSOLUTE_TIMEOUT_MS;
   const killGraceMs = deps.killGraceMs ?? KILL_GRACE_MS;
   const onUpdate = deps.onUpdate;
 
-  const tmp = await writeReviewerPrompt();
+  const workspace = await createReviewerWorkspace();
   try {
+    await collectReviewerEvidence(workspace, cwd, runGit);
     const args = buildPiArgs({
-      task,
+      task: buildTaskWithEvidence(task, cwd, workspace),
       tools: REVIEWER_TOOLS,
-      appendSystemPromptPath: tmp.filePath,
+      appendSystemPromptPath: workspace.promptPath,
     });
     const invocation = getPiInvocation(args);
 
@@ -450,24 +523,23 @@ export async function runReviewer(
       throw new Error(`Reviewer failed: ${detail}`);
     }
 
+    if (parsed.turns === 0 || parsed.finalText.trim().length === 0) {
+      throw new Error("Reviewer failed: reviewer produced no findings");
+    }
+
     return {
-      content: [
-        {
-          type: "text",
-          text: parsed.finalText || "(reviewer produced no findings)",
-        },
-      ],
+      content: [{ type: "text", text: parsed.finalText }],
       details: { turns: parsed.turns, stopReason: parsed.stopReason },
     };
   } finally {
-    cleanupReviewerPrompt(tmp);
+    cleanupReviewerWorkspace(workspace);
   }
 }
 
 const ReviewParams = Type.Object({
   task: Type.String({
     description:
-      "The full reviewer assignment: inputs (original ask, change intent, intended behavior, coding-rules path, verification run) plus an instruction to audit the current uncommitted diff and return actionable findings only.",
+      "The full reviewer assignment: original ask, change intent, intended behavior, coding-rules source, verification, reviewer-output contract, and any prior findings with their dispositions.",
   }),
   cwd: Type.Optional(
     Type.String({
@@ -485,7 +557,7 @@ export function registerPiReviewSubagent(pi: ExtensionAPI): void {
     name: REVIEW_TOOL_NAME,
     label: "Uncommitted Review",
     description:
-      "Spawn a read-only adversarial reviewer (child pi process) to audit the current uncommitted diff and return actionable findings only. The behavior-control review process uses this on upstream pi (OMP uses the native task tool instead). Pass the full reviewer assignment as `task`.",
+      "Spawn a read-only adversarial reviewer (child pi process) to audit the current uncommitted diff and return a structured blocking/non-blocking verdict. The behavior-control review process uses this on upstream pi (OMP uses the native task tool instead). Pass the full reviewer assignment as `task`.",
     parameters: ReviewParams,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       // This adapter spawns a child `pi`. On OMP the running binary is `omp`,

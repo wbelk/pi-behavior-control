@@ -9,7 +9,10 @@ import { InspectionTracker } from "./tracking/inspection-tracker.ts";
 import { ReadTracker } from "./tracking/read-tracker.ts";
 import { ToolCallTracker } from "./tracking/tool-call-tracker.ts";
 import { buildReviewInstruction } from "./post-edit-review/review-prompt.ts";
-import { loadRules } from "./post-edit-review/rules-source.ts";
+import {
+  loadRules,
+  resolveRulesSource,
+} from "./post-edit-review/rules-source.ts";
 import { buildReminderAppend } from "./response-rules/reminder-prompt.ts";
 import {
   loadResponseReminder,
@@ -131,7 +134,7 @@ export default function pluginFactory(pi: ExtensionAPI): void {
       if (!skipGate) {
         const accepted = await ctx.ui.confirm(
           "\u001b[1;33m⚔️  pi-behavior-control: run this session?\u001b[0m",
-          "\n\u001b[97mEnforces read-before-edit (per-turn), post-edit review reminder, and speculation check. Recommended for code work; skip for chat / research / planning sessions.\u001b[0m",
+          "\n\u001b[97mEnforces read-before-edit (four-turn window), post-edit review reminder, and speculation check. Recommended for code work; skip for chat / research / planning sessions.\u001b[0m",
         );
         st.enabled = accepted;
         if (!accepted) return;
@@ -139,7 +142,7 @@ export default function pluginFactory(pi: ExtensionAPI): void {
 
       await chooseVerifier(ctx);
 
-      if (!loadRules(ctx.cwd)) {
+      if (!resolveRulesSource(ctx.cwd)) {
         await promptForMissingRules(ctx);
       }
 
@@ -167,9 +170,9 @@ export default function pluginFactory(pi: ExtensionAPI): void {
       verifier === "session-model"
         ? "session-model"
         : `${verifier.provider}/${verifier.id}`;
-    const rules = loadRules(ctx.cwd);
-    const rulesLabel = rules
-      ? `${rules.source} (${rules.path})`
+    const rulesSource = resolveRulesSource(ctx.cwd);
+    const rulesLabel = rulesSource
+      ? `${rulesSource.source} ${rulesSource.kind} (${rulesSource.path})`
       : "none (skipping citations in reviews)";
     const reminder = loadResponseReminder(ctx.cwd);
     const reminderLabel = reminder
@@ -182,41 +185,45 @@ export default function pluginFactory(pi: ExtensionAPI): void {
   };
 
   /**
-   * Actionable prompt fired when neither `./coding-rules.md` (cwd) nor
-   * `<agentDir>/coding-rules.md` (master) exists. Offers three paths:
-   *   1. Create empty file at cwd
-   *   2. Create empty file at agent dir (global)
-   *   3. Continue without rules this session
+   * Actionable prompt fired when no project or global rules directory or
+   * compatibility file exists. Creates a directory with an empty shared file,
+   * or continues without rules for this session.
    */
   const promptForMissingRules = async (
     ctx: Parameters<Parameters<ExtensionAPI["on"]>[1]>[1],
   ): Promise<void> => {
-    const cwdPath = path.join(ctx.cwd, "coding-rules.md");
-    const masterPath = path.join(agentDir(), "coding-rules.md");
+    const cwdDirectory = path.join(ctx.cwd, "coding-rules");
+    const cwdFile = path.join(ctx.cwd, "coding-rules.md");
+    const masterDirectory = path.join(agentDir(), "coding-rules");
+    const masterFile = path.join(agentDir(), "coding-rules.md");
+    const cwdShared = path.join(cwdDirectory, "coding-rules.md");
+    const masterShared = path.join(masterDirectory, "coding-rules.md");
 
     // ANSI bold + yellow on the first line for warning emphasis. If
     // pi/OMP strips ANSI in dialog text, the ⚠ glyph still conveys
     // the warning semantics. File paths stay in their natural case.
     const title = [
-      "\u001b[1;33m⚠ pi-behavior-control: no coding-rules.md found\u001b[0m",
+      "\u001b[1;33m⚠ pi-behavior-control: no coding rules found\u001b[0m",
       "",
-      "Coding rules are read from (cwd first, then global fallback):",
-      `  • ${cwdPath} (project-local; this directory only)`,
-      `  • ${masterPath} (global; applies to all projects)`,
+      "Coding rules use the first available source:",
+      `  1. ${cwdDirectory} (project directory)`,
+      `  2. ${cwdFile} (project compatibility file)`,
+      `  3. ${masterDirectory} (global directory)`,
+      `  4. ${masterFile} (global compatibility file)`,
       "",
       "Without one, post-edit review reminders will skip rule citations.",
       "What would you like to do?",
     ].join("\n");
 
-    const createCwd = `Create empty ${cwdPath} (project-local)`;
-    const createMaster = `Create empty ${masterPath} (global)`;
+    const createCwd = `Create empty ${cwdShared} (project-local)`;
+    const createMaster = `Create empty ${masterShared} (global)`;
     const skip = "Continue without rules this session";
 
     const choice = await ctx.ui.select(title, [createCwd, createMaster, skip]);
 
     if (choice === undefined || choice === skip) return;
 
-    const target = choice === createCwd ? cwdPath : masterPath;
+    const target = choice === createCwd ? cwdShared : masterShared;
     try {
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, "", "utf-8");
@@ -336,19 +343,20 @@ export default function pluginFactory(pi: ExtensionAPI): void {
   });
 
   // =========================================================================
-  // tool_call — read tracker (hook 2) + edit gate (hook 3)
+  // tool_call — pending read fingerprint (hook 2) + edit gate (hook 3)
   // =========================================================================
   pi.on("tool_call", (event, ctx) => {
     if (!state.enabled) return;
 
-    // Some pi shims dispatch `read`/`edit`/`write` events whose `input`
-    // is not the expected `{ path }` shape (e.g. harness tools that
-    // happen to share the type name). Guard the path field so the
-    // hook silently no-ops instead of throwing into the agent loop.
+    // Some pi shims dispatch `edit`/`write` events whose `input` is not the
+    // expected `{ path }` shape (for example, harness tools that share the
+    // type name). Guard the path field so the hook silently no-ops instead of
+    // throwing into the agent loop.
+
     if (isToolCallEventType("read", event)) {
-      const rawPath = (event.input as { path?: unknown }).path;
+      const rawPath: unknown = event.input.path;
       if (typeof rawPath !== "string" || rawPath.length === 0) return;
-      tracker.record(path.resolve(ctx.cwd, rawPath));
+      tracker.beginRead(event.toolCallId, path.resolve(ctx.cwd, rawPath));
       return;
     }
 
@@ -356,7 +364,7 @@ export default function pluginFactory(pi: ExtensionAPI): void {
       isToolCallEventType("edit", event) ||
       isToolCallEventType("write", event)
     ) {
-      const rawPath = (event.input as { path?: unknown }).path;
+      const rawPath: unknown = event.input.path;
       if (typeof rawPath !== "string" || rawPath.length === 0) return;
       const blocked = tracker.check(path.resolve(ctx.cwd, rawPath));
       if (blocked) return blocked;
@@ -368,11 +376,18 @@ export default function pluginFactory(pi: ExtensionAPI): void {
   // =========================================================================
   pi.on("tool_result", (event, ctx) => {
     if (!state.enabled) return;
+
+    // A read's pre-execution fingerprint becomes authorizing only after a
+    // successful result and only when the file stayed unchanged throughout.
+    if (event.toolName === "read") {
+      tracker.completeRead(event.toolCallId, !event.isError);
+    }
     if (event.isError) return;
 
     // Record every successful tool result as low-fidelity, deduped evidence
     // for the verifier's <TOOL_CALLS> block (same window as inspections).
     toolCallTracker.record(event.toolName, event.input);
+    if (event.toolName === "read") return;
 
     // Inspection-evidence branch: search/find/grep/lsp/ast_grep and fff's
     // equivalents surface files the agent inspected. Feed their rendered
@@ -391,11 +406,13 @@ export default function pluginFactory(pi: ExtensionAPI): void {
     if (event.toolName !== "edit" && event.toolName !== "write") return;
 
     const rawPath = event.input.path;
-    if (typeof rawPath === "string" && rawPath.length > 0) {
-      tracker.refresh(path.resolve(ctx.cwd, rawPath));
-    }
+    const targetPath =
+      typeof rawPath === "string" && rawPath.length > 0
+        ? path.resolve(ctx.cwd, rawPath)
+        : undefined;
+    if (targetPath) tracker.refresh(targetPath);
 
-    const resolved = loadRules(ctx.cwd);
+    const resolved = loadRules(ctx.cwd, targetPath);
     const review = buildReviewInstruction(resolved?.text);
 
     return {
@@ -488,8 +505,10 @@ export default function pluginFactory(pi: ExtensionAPI): void {
         verifier === "session-model"
           ? "session-model"
           : `${verifier.provider}/${verifier.id}`;
-      const rules = loadRules(ctx.cwd);
-      const rulesLabel = rules ? `${rules.source} (${rules.path})` : "none";
+      const rulesSource = resolveRulesSource(ctx.cwd);
+      const rulesLabel = rulesSource
+        ? `${rulesSource.source} ${rulesSource.kind} (${rulesSource.path})`
+        : "none";
       const reminder = loadResponseReminder(ctx.cwd);
       let reminderLabel: string;
       if (reminder) {
